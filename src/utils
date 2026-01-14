@@ -1,0 +1,63 @@
+"""
+유틸리티 함수
+"""
+from typing import Optional, Tuple
+
+try:
+    from geopy.geocoders import Nominatim
+    from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
+
+
+def geocode_address(address: str) -> Optional[Tuple[float, float]]:
+    """
+    주소를 좌표로 변환
+    
+    Args:
+        address: 주소 문자열 (예: "서울시 강남구 역삼동")
+    
+    Returns:
+        (위도, 경도) 튜플 또는 None
+    """
+    if not GEOPY_AVAILABLE:
+        return None
+    
+    try:
+        geolocator = Nominatim(user_agent="naver_land_scraper", timeout=10)
+        location = geolocator.geocode(address)
+        
+        if location:
+            return (location.latitude, location.longitude)
+        return None
+    except (GeocoderTimedOut, GeocoderServiceError) as e:
+        print(f"좌표 변환 오류: {e}")
+        return None
+    except Exception as e:
+        print(f"예상치 못한 오류: {e}")
+        return None
+
+
+def parse_coordinates(lat_str: str, lon_str: str) -> Optional[Tuple[float, float]]:
+    """
+    좌표 문자열을 파싱
+    
+    Args:
+        lat_str: 위도 문자열
+        lon_str: 경도 문자열
+    
+    Returns:
+        (위도, 경도) 튜플 또는 None
+    """
+    try:
+        lat = float(lat_str.strip())
+        lon = float(lon_str.strip())
+        
+        # 유효성 검증 (한국 좌표 범위)
+        if 33.0 <= lat <= 38.0 and 124.0 <= lon <= 132.0:
+            return (lat, lon)
+        return None
+    except (ValueError, AttributeError):
+        return None
+
