@@ -227,15 +227,15 @@ class TelegramNotifier:
     
     @staticmethod
     def _format_complex_analysis_message(complex_name: str, data: Dict) -> str:
-        """단지 분석 메시지 포맷팅 (평형대별 가격 분포 포함)"""
+        """단지 분석 메시지 포맷팅 (면적대별 가격 분포 포함)"""
         total_count = data.get("total_count", 0)
         if total_count == 0:
-            return f"{complex_name}: 데이터 없음\n"
+            return f"🏢 {complex_name}: 데이터 없음\n"
         
-        msg = f"<b>{complex_name}</b>\n"
+        msg = f"🏢 <b>{complex_name}</b>\n"
         msg += f"매물: {total_count}개\n"
         
-        # 평형대별 가격 분포
+        # 면적대별 가격 분포
         price_dist_by_area = data.get("price_distribution_by_area", {})
         if "error" not in price_dist_by_area and price_dist_by_area.get("by_area"):
             by_area = price_dist_by_area.get("by_area", {})
@@ -246,7 +246,7 @@ class TelegramNotifier:
                 median = dist_data.get("median", 0)
                 min_price = dist_data.get("min", 0)
                 max_price = dist_data.get("max", 0)
-                msg += f"{area}평: {min_price:.1f}억 ~ {max_price:.1f}억 (중앙: {median:.1f}억, {count}개)\n"
+                msg += f"{area}m²: {min_price:.1f}억 ~ {max_price:.1f}억 (중앙: {median:.1f}억, {count}개)\n"
         else:
             # 폴백: 전체 가격 정보
             overall = price_dist_by_area.get("overall", {})
@@ -260,7 +260,7 @@ class TelegramNotifier:
         """모든 단지 분석을 하나의 메시지로 통합"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         
-        msg = f"<b>단지 분석 리포트</b>\n"
+        msg = f"📊 <b>단지 분석 리포트</b>\n"
         msg += f"{now}\n"
         msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         
@@ -304,13 +304,13 @@ class TelegramNotifier:
     
     @staticmethod
     def _format_comparison_message(my_data: Dict, target_data: Dict) -> str:
-        """단일 비교 분석 메시지 포맷팅 (평형대별 비교)"""
+        """단일 비교 분석 메시지 포맷팅 (면적대별 비교)"""
         my_name = my_data.get("complex_name", "내 집")
         target_name = target_data.get("complex_name", "관심 단지")
         
         msg = f"<b>{my_name} vs {target_name}</b>\n"
         
-        # 평형대별 가격 분포 비교
+        # 면적대별 가격 분포 비교
         my_price_dist = my_data.get("price_distribution_by_area", {})
         target_price_dist = target_data.get("price_distribution_by_area", {})
         
@@ -320,11 +320,11 @@ class TelegramNotifier:
         my_by_area = my_price_dist.get("by_area", {})
         target_by_area = target_price_dist.get("by_area", {})
         
-        # 공통 평형대 찾기
+        # 공통 면적대 찾기
         common_areas = set(my_by_area.keys()) & set(target_by_area.keys())
         
         if not common_areas:
-            # 공통 평형대가 없으면 전체 통계 비교
+            # 공통 면적대가 없으면 전체 통계 비교
             my_overall = my_price_dist.get("overall", {})
             target_overall = target_price_dist.get("overall", {})
             
@@ -340,7 +340,7 @@ class TelegramNotifier:
             
             msg += f"전체 중앙가: {my_median:.1f}억 → {target_median:.1f}억 (차이: {price_diff:+.1f}억, {price_diff_pct:+.1f}%, {direction})\n"
         else:
-            # 공통 평형대별로 비교
+            # 공통 면적대별로 비교
             for area in sorted(common_areas):
                 my_dist = my_by_area[area]
                 target_dist = target_by_area[area]
@@ -355,7 +355,7 @@ class TelegramNotifier:
                 price_diff_pct = (price_diff / my_median) * 100 if my_median > 0 else 0
                 direction = "높음" if price_diff > 0 else "낮음" if price_diff < 0 else "동일"
                 
-                msg += f"{area}평: {my_median:.1f}억 → {target_median:.1f}억 (차이: {price_diff:+.1f}억, {price_diff_pct:+.1f}%, {direction})\n"
+                msg += f"{area}m²: {my_median:.1f}억 → {target_median:.1f}억 (차이: {price_diff:+.1f}억, {price_diff_pct:+.1f}%, {direction})\n"
         
         return msg
     
@@ -364,7 +364,7 @@ class TelegramNotifier:
         """모든 비교 분석을 하나의 메시지로 통합"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         
-        msg = f"<b>가격 비교 분석</b>\n"
+        msg = f"⚖️ <b>가격 비교 분석</b>\n"
         msg += f"{now}\n"
         msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         

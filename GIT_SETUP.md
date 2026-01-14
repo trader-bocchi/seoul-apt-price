@@ -82,7 +82,7 @@ git add .
 git status
 
 # 첫 커밋
-git commit -m "Initial commit: 네이버 부동산 매물 수집 시스템"
+git commit -m "Initial commit"
 
 # 커밋 확인
 git log

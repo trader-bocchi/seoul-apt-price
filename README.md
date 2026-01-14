@@ -1,6 +1,6 @@
-# 네이버 부동산 매물 수집 및 텔레그램 알림 시스템
+# 부동산 매물 수집 및 텔레그램 알림 시스템
 
-네이버 부동산 API를 활용하여 관심 단지의 매물 정보를 수집하고, 텔레그램으로 분석 리포트를 전송하는 시스템입니다.
+관심 단지의 매물 정보를 수집하고, 텔레그램으로 분석 리포트를 전송하는 시스템입니다.
 
 ## 설치
 
@@ -70,47 +70,8 @@ python scripts/send_telegram_report.py
 - `MY_HOME_COMPLEX_NAME`과 `TARGET_HOME_COMPLEX_NAME`에 설정한 단지명과 일치하는 매물만 분석합니다
 - 전체 매물을 분석합니다 (최근 30일 제한 없음)
 
-## 프로젝트 구조
-
-```
-seoul-apt-price/
-├── scripts/                    # 실행 스크립트
-│   ├── collect_by_region.py   # 지역별 매물 수집
-│   └── send_telegram_report.py # 텔레그램 리포트 전송
-├── tests/                      # 테스트 파일
-│   ├── test_direct_api.py
-│   └── test_region_search.py
-├── src/                        # 소스 코드
-│   ├── collectors/            # 데이터 수집 모듈
-│   ├── config/               # 설정 관리
-│   ├── notifiers/            # 알림 모듈 (텔레그램)
-│   ├── processors/           # 데이터 처리 모듈
-│   ├── storage/              # 데이터 저장 모듈
-│   └── utils/                # 유틸리티 함수
-├── data/                      # 데이터 파일
-│   ├── raw/                  # 수집된 원시 데이터
-│   │   └── {지역명}/
-│   │       └── offers_YYYYMMDD.csv
-│   ├── ref/                  # 참조 데이터
-│   │   └── 국토교통부_행정구역법정동코드_20250807.CSV
-│   └── telegram_logs/        # 텔레그램 로그
-├── old/                       # 오래된 파일 (보관용)
-└── venv/                      # 가상환경
-```
-
 ## 데이터 저장 위치
 
 - Raw 데이터: `data/raw/{지역명}/offers_YYYYMMDD.csv`
 - 참조 데이터: `data/ref/국토교통부_행정구역법정동코드_20250807.CSV`
 - 텔레그램 로그: `data/telegram_logs/`
-
-## Git 연동
-
-Git 저장소에 업로드하는 방법은 `GIT_SETUP.md` 파일을 참고하세요.
-
-## 주요 기능
-
-- **지역별 매물 수집**: 행정구역명을 입력하면 자동으로 매물 수집
-- **평형별 분석**: 같은 단지 내에서 평형별로 가격 분석
-- **가격 필터**: 가격대와 면적대 필터 조건 지원
-- **텔레그램 리포트**: 개별 단지 분석 + 비교 분석 리포트 자동 전송

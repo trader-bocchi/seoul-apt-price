@@ -114,40 +114,32 @@ class ComplexAnalyzer:
     
     def _analyze_by_area(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
-        평형별 분석 (제곱미터를 평으로 변환: 1평 = 3.3058m²)
+        면적별 분석 (전용면적제곱미터 직접 사용)
         
         Args:
             df: 매물 데이터 DataFrame
         
         Returns:
-            평형별 분석 결과 딕셔너리
+            면적별 분석 결과 딕셔너리
         """
-        # 제곱미터를 평으로 변환하는 것이 더 정확함 (1평 = 3.3058m²)
-        PYEONG_TO_M2 = 3.3058
-        
-        if '전용면적제곱미터' in df.columns and '가격' in df.columns:
-            # 제곱미터를 평으로 변환
-            df_clean = df[['전용면적제곱미터', '가격', '동명', '층수정보', '방향']].copy()
-            df_clean['전용면적평'] = pd.to_numeric(df_clean['전용면적제곱미터'], errors='coerce') / PYEONG_TO_M2
-        elif '전용면적평' in df.columns and '가격' in df.columns:
-            # 이미 평 단위인 경우
-            df_clean = df[['전용면적평', '가격', '동명', '층수정보', '방향']].copy()
-            df_clean['전용면적평'] = pd.to_numeric(df_clean['전용면적평'], errors='coerce')
-        else:
+        if '전용면적제곱미터' not in df.columns or '가격' not in df.columns:
             return {"error": "면적 또는 가격 정보 없음"}
         
+        # 전용면적제곱미터를 직접 사용
+        df_clean = df[['전용면적제곱미터', '가격', '동명', '층수정보', '방향']].copy()
+        df_clean['전용면적제곱미터'] = pd.to_numeric(df_clean['전용면적제곱미터'], errors='coerce')
         df_clean['가격_억'] = df_clean['가격'].astype(float) / 10000
-        df_clean = df_clean.dropna(subset=['전용면적평', '가격_억'])
+        df_clean = df_clean.dropna(subset=['전용면적제곱미터', '가격_억'])
         
         if df_clean.empty:
             return {"error": "유효한 면적/가격 데이터 없음"}
         
-        # 평형대별로 그룹화 (5평 단위로 반올림)
-        df_clean['평형대'] = (df_clean['전용면적평'] / 5).round() * 5
-        df_clean['평형대'] = df_clean['평형대'].astype(int)
+        # 면적대별로 그룹화 (10m² 단위로 반올림)
+        df_clean['면적대'] = (df_clean['전용면적제곱미터'] / 10).round() * 10
+        df_clean['면적대'] = df_clean['면적대'].astype(int)
         
         area_groups = {}
-        for area_type, group_df in df_clean.groupby('평형대'):
+        for area_type, group_df in df_clean.groupby('면적대'):
             group_prices = group_df['가격_억']
             
             # 가장 많은 향
@@ -163,7 +155,7 @@ class ComplexAnalyzer:
                 "most_common_direction": most_common_direction
             }
         
-        # 평형대별 정렬 (면적 순)
+        # 면적대별 정렬 (면적 순)
         sorted_areas = sorted(area_groups.items(), key=lambda x: x[0])
         
         return {
@@ -173,44 +165,37 @@ class ComplexAnalyzer:
     
     def _calculate_price_distribution_by_area(self, df: pd.DataFrame, area_analysis: Dict[str, Any]) -> Dict[str, Any]:
         """
-        평형대별 가격 분포 계산
+        면적대별 가격 분포 계산 (전용면적제곱미터 직접 사용)
         
         Args:
             df: 매물 데이터 DataFrame
-            area_analysis: 평형별 분석 결과
+            area_analysis: 면적별 분석 결과
         
         Returns:
-            평형대별 가격 분포 딕셔너리
+            면적대별 가격 분포 딕셔너리
         """
         if "error" in area_analysis or not area_analysis.get("area_types"):
-            return {"error": "평형별 분석 데이터 없음"}
+            return {"error": "면적별 분석 데이터 없음"}
         
-        # 제곱미터를 평으로 변환하는 것이 더 정확함 (1평 = 3.3058m²)
-        PYEONG_TO_M2 = 3.3058
-        
-        # 면적 데이터 준비
-        if '전용면적제곱미터' in df.columns:
-            df_clean = df[['전용면적제곱미터', '가격']].copy()
-            df_clean['전용면적평'] = pd.to_numeric(df_clean['전용면적제곱미터'], errors='coerce') / PYEONG_TO_M2
-        elif '전용면적평' in df.columns:
-            df_clean = df[['전용면적평', '가격']].copy()
-            df_clean['전용면적평'] = pd.to_numeric(df_clean['전용면적평'], errors='coerce')
-        else:
+        if '전용면적제곱미터' not in df.columns:
             return {"error": "면적 정보 없음"}
         
+        # 전용면적제곱미터를 직접 사용
+        df_clean = df[['전용면적제곱미터', '가격']].copy()
+        df_clean['전용면적제곱미터'] = pd.to_numeric(df_clean['전용면적제곱미터'], errors='coerce')
         df_clean['가격_억'] = df_clean['가격'].astype(float) / 10000
-        df_clean = df_clean.dropna(subset=['전용면적평', '가격_억'])
+        df_clean = df_clean.dropna(subset=['전용면적제곱미터', '가격_억'])
         
         if df_clean.empty:
             return {"error": "유효한 데이터 없음"}
         
-        # 평형대별로 그룹화 (5평 단위로 반올림)
-        df_clean['평형대'] = (df_clean['전용면적평'] / 5).round() * 5
-        df_clean['평형대'] = df_clean['평형대'].astype(int)
+        # 면적대별로 그룹화 (10m² 단위로 반올림)
+        df_clean['면적대'] = (df_clean['전용면적제곱미터'] / 10).round() * 10
+        df_clean['면적대'] = df_clean['면적대'].astype(int)
         
-        # 평형대별 가격 분포 계산
+        # 면적대별 가격 분포 계산
         distribution_by_area = {}
-        for area_type, group_df in df_clean.groupby('평형대'):
+        for area_type, group_df in df_clean.groupby('면적대'):
             group_prices = group_df['가격_억']
             
             distribution_by_area[int(area_type)] = {
@@ -223,7 +208,7 @@ class ComplexAnalyzer:
                 "q75": float(group_prices.quantile(0.75))
             }
         
-        # 전체 통합 통계 (모든 평형대 통합)
+        # 전체 통합 통계 (모든 면적대 통합)
         all_prices = df_clean['가격_억']
         overall = {
             "min": float(all_prices.min()),
