@@ -307,4 +307,23 @@ class EnvConfig:
             except ValueError:
                 return None
         return None
+    
+    @staticmethod
+    def get_my_home_area() -> Optional[float]:
+        """
+        내 집 면적 반환 (선택사항)
+        
+        .env 파일에서 MY_HOME_AREA 환경 변수를 읽어 반환합니다.
+        형식: MY_HOME_AREA=51.0 (m² 단위)
+        
+        Returns:
+            면적 (m²) 또는 None
+        """
+        area_str = os.getenv("MY_HOME_AREA")
+        if area_str:
+            try:
+                return float(area_str)
+            except ValueError:
+                return None
+        return None
 

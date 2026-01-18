@@ -39,6 +39,7 @@ env/
 # Data
 data/raw/
 data/telegram_logs/
+old/
 
 # Logs
 *.log
@@ -47,3 +48,6 @@ data/telegram_logs/
 .DS_Store
 Thumbs.db
 
+# Documentation (README.md 제외)
+*.md
+!README.md

@@ -42,22 +42,29 @@ def load_all_offers_by_complex(complex_names: List[str], days: int = None) -> Di
         logger.warning(f"Data directory not found: {raw_dir}")
         return {}
     
-    # 모든 지역 폴더의 offers 파일 찾기
+    # 모든 지역 폴더의 최신 offers 파일만 찾기
     all_offers = []
     for region_dir in raw_dir.iterdir():
         if not region_dir.is_dir():
             continue
         
         offer_files = list(region_dir.glob("offers_*.csv"))
-        for offer_file in offer_files:
-            try:
-                df = pd.read_csv(offer_file, encoding='utf-8-sig')
-                if '단지명' not in df.columns:
-                    continue
-                all_offers.append(df)
-            except Exception as e:
-                logger.warning(f"Error reading {offer_file}: {e}")
+        if not offer_files:
+            continue
+        
+        # 최신 파일만 선택
+        offer_files.sort(key=lambda x: x.name, reverse=True)
+        latest_file = offer_files[0]
+        
+        try:
+            df = pd.read_csv(latest_file, encoding='utf-8-sig')
+            if '단지명' not in df.columns:
                 continue
+            all_offers.append(df)
+            logger.info(f"  최신 파일 로드: {latest_file.name}")
+        except Exception as e:
+            logger.warning(f"Error reading {latest_file}: {e}")
+            continue
     
     if not all_offers:
         logger.warning("No offer files found in data/raw")
@@ -163,21 +170,14 @@ def main():
             else:
                 logger.error(f"✗ 단지 분석 리포트 전송 실패")
         
-        # 3단계: 두 번째 메시지 - 가격 비교 분석 통합 리포트
-        if my_analysis and my_analysis.get("total_count", 0) > 0 and target_analyses:
-            # 유효한 타겟만 필터링
-            valid_targets = {
-                name: data for name, data in target_analyses.items()
-                if data.get("total_count", 0) > 0
-            }
-            
-            if valid_targets:
-                logger.info(f"\n[메시지 2/2] 가격 비교 분석 리포트 전송 중...")
-                success = notifier.send_all_comparisons(my_analysis, valid_targets)
-                if success:
-                    logger.info(f"✓ 가격 비교 분석 리포트 전송 완료")
-                else:
-                    logger.error(f"✗ 가격 비교 분석 리포트 전송 실패")
+        # 2-1단계: 내 단지 상세분석 리포트 (신규)
+        if my_analysis and my_analysis.get("total_count", 0) > 0:
+            logger.info(f"\n[메시지 2/2] 내 단지 상세분석 리포트 전송 중...")
+            success = notifier.send_my_home_detailed_analysis(my_home, my_analysis)
+            if success:
+                logger.info(f"✓ 내 단지 상세분석 리포트 전송 완료")
+            else:
+                logger.error(f"✗ 내 단지 상세분석 리포트 전송 실패")
         
         logger.info("\n" + "=" * 60)
         logger.info("모든 리포트 전송 완료!")
