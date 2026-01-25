@@ -75,7 +75,7 @@ def main():
     print(f"   .env의 REGION_CORTAR_NO는 무시됩니다.")
     
     # 2. 수집 옵션 설정
-    rlet_tp_cd = "APT"  # 아파트
+    rlet_tp_cd = "APT:JGC"  # 아파트 + 주상복합 (제공된 URL 기준)
     # 정답지 API 형식: A1:B1:B2:B3 (매매, 전세, 월세, 반전세 모두 수집)
     trad_tp_cd = "A1:B1:B2:B3"   # 모든 거래 유형 (매매, 전세, 월세, 반전세)
     

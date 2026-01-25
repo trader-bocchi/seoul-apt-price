@@ -91,6 +91,25 @@ class RegionCollector:
             cls._region_code_cache = cache
             return cache
     
+    @staticmethod
+    def normalize_region_name(region_name: str) -> str:
+        """
+        지역명 정규화 (서울시 → 서울특별시 등)
+        
+        Args:
+            region_name: 원본 지역명
+        
+        Returns:
+            정규화된 지역명
+        """
+        normalized = region_name.strip()
+        
+        # 서울시 → 서울특별시 변환
+        if "서울시" in normalized and "서울특별시" not in normalized:
+            normalized = normalized.replace("서울시", "서울특별시")
+        
+        return normalized
+    
     def parse_region_name(self, region_name: str) -> Dict[str, Optional[str]]:
         """
         행정구역명을 파싱하여 시/도, 시/군/구, 읍/면/동 추출
@@ -102,6 +121,9 @@ class RegionCollector:
             {"city": "서울시", "district": "강서구", "dong": "가양동", "province": None}
         """
         import re
+        
+        # 지역명 정규화 (서울시 → 서울특별시)
+        region_name = self.normalize_region_name(region_name)
         
         # 공백 제거 및 정규화
         name = region_name.strip()
@@ -140,10 +162,14 @@ class RegionCollector:
             if province.endswith("시"):
                 city = province
             elif province == "서울" or province == "서울시":
-                city = "서울시"
+                city = "서울특별시"  # 정규화: 서울시 → 서울특별시
             elif province == "경기도":
                 # 경기도는 city가 따로 있음 (성남시, 수원시 등)
                 pass
+        
+        # city가 "서울시"로 파싱된 경우 "서울특별시"로 정규화
+        if city == "서울시":
+            city = "서울특별시"
         
         return {
             "province": province,
@@ -167,6 +193,9 @@ class RegionCollector:
         Returns:
             cortarNo 또는 None
         """
+        # 지역명 정규화 (서울시 → 서울특별시)
+        region_name = self.normalize_region_name(region_name)
+        
         # 방법 1: CSV 파일에서 직접 검색
         region_codes = self._load_region_codes_from_csv()
         
@@ -865,6 +894,7 @@ class RegionCollector:
             if progress_callback:
                 progress_callback(3, 100, f"경고: {region_info['warning']}")
         
+        # 행정구역명에서 매칭한 값만 사용 (하드코딩된 알려진 지역 정보 사용하지 않음)
         cortar_no = region_info["cortarNo"]
         center_lat = region_info["lat"]
         center_lon = region_info["lon"]
@@ -876,7 +906,9 @@ class RegionCollector:
                 progress_callback(6, 100, f"찾은 지역명: {found_region_name}")
         
         # 2단계: 경계 좌표 계산
-        zoom = 14
+        # 동 단위일 때는 줌 레벨 15 사용 (제공된 URL 예시: z=15)
+        parsed = self.parse_region_name(region_name)
+        zoom = 15 if parsed.get("dong") else 14  # 동이 있으면 15, 없으면 14
         btm, lft, top, rgt = self.calculate_region_bounds(center_lat, center_lon, zoom)
         
         # 3단계: 첫 페이지 조회하여 총 매물 개수 확인
@@ -904,15 +936,13 @@ class RegionCollector:
                 "showR0": "",
                 "cortarNo": cortar_no
             }
-            # 첫 페이지는 totCnt 없이 요청
+            # 첫 페이지 요청 URL 구성 (totCnt는 동적으로 추출하므로 포함하지 않음)
             first_page_url = f"https://m.land.naver.com/cluster/ajax/articleList?{urllib.parse.urlencode(first_page_params)}"
             if progress_callback:
                 progress_callback(12, 100, f"[DEBUG] 첫 페이지 요청 URL: {first_page_url}")
             print(f"[DEBUG] 첫 페이지 요청 URL: {first_page_url}")
             
-            # 첫 페이지 요청: totCnt 없이 요청
-            # 사용자가 제공한 URL (page=1~11)을 그대로 사용하면 데이터가 잘 나옴
-            # 따라서 totCnt는 첫 페이지 요청 시 필요하지 않고, 페이지네이션을 통해 추정
+            # 첫 페이지 요청: totCnt 없이 요청 (API 응답에서 동적으로 추출)
             first_page_data = self.api_client.get_article_list_by_region(
                 cortar_no=cortar_no,
                 lat=center_lat,
@@ -925,7 +955,7 @@ class RegionCollector:
                 rlet_tp_cd=rlet_tp_cd,
                 trad_tp_cd=trad_tp_cd,
                 page=1,
-                tot_cnt=None,  # totCnt 없이 요청 (페이지네이션으로 추정)
+                tot_cnt=None,  # totCnt는 API 응답에서 동적으로 추출
                 dprc_min=dprc_min,
                 dprc_max=dprc_max,
                 spc_min=spc_min,
@@ -959,14 +989,9 @@ class RegionCollector:
             items_per_page = len(body)
             more = first_page_data.get("more", False)
             
-            # totCnt 추출 시도
-            # 핵심: totCnt는 첫 페이지 응답에 없을 수 있음
-            # 사용자가 제공한 URL을 보면 totCnt=209가 파라미터로 있지만,
-            # 실제로는 첫 페이지 요청 시 totCnt 없이 요청하고, 페이지네이션을 통해 모든 페이지 수집
             
-            # 응답에서 totCnt 추출 시도 (여러 위치 확인)
-            # 사용자가 제공한 URL 응답을 보면 totCnt 필드가 응답에 없을 수 있음
-            # 따라서 응답의 모든 가능한 위치에서 확인
+            # totCnt 추출 시도 (API 응답에서 동적으로 추출)
+            # totCnt는 동적으로 변할 수 있으므로 하드코딩하지 않고 API 응답에서 추출
             tot_cnt = (
                 first_page_data.get("totCnt") or
                 first_page_data.get("data", {}).get("totCnt") or
@@ -1016,8 +1041,8 @@ class RegionCollector:
             raise Exception(error_msg)
         
         # 4단계: 페이지네이션으로 나머지 페이지 수집
-        # 핵심: 사용자가 제공한 URL처럼 page=1~11까지만 바꿔서 호출하면 됨
-        # totCnt는 첫 페이지 응답에서 얻거나, 페이지네이션으로 추정
+        # ApiRef.md 기준: more=true이거나 body 길이가 20개인 경우 다음 페이지가 존재할 수 있음
+        # 모든 페이지를 수집해야 하므로 more=False이고 body < 20일 때까지 계속 수집
         if more or items_per_page >= 20:
             page = 2
             max_pages = 100  # 안전장치: 최대 100페이지까지
@@ -1185,44 +1210,36 @@ class RegionCollector:
                     # 매물 추가 (중요: 종료 조건 체크 전에 먼저 추가)
                     self.properties.extend(page_properties)
                     
-                    # totCnt 기반 종료 조건 확인 (매물 추가 후에 체크)
+                    # ApiRef.md 기준: more=true이거나 body=20이면 다음 페이지가 존재할 수 있음
+                    # 종료 조건: more=False이고 body < 20일 때만 종료
+                    more = page_data.get("more", False)
+                    
+                    # 우선순위: more 필드와 body 길이를 우선 확인 (totCnt보다 정확함)
+                    if not more and len(page_body) < 20:
+                        # more=False이고 body < 20이면 마지막 페이지
+                        if progress_callback:
+                            progress_callback(progress_pct, 100, f"페이지 {page}: 마지막 페이지 (more={more}, body={len(page_body)})")
+                        break
+                    
+                    # totCnt가 있으면 추가 검증 (더블 체크)
                     if tot_cnt:
-                        # 수집한 매물 수가 totCnt에 도달했는지 확인 (매물 추가 후)
+                        # 수집한 매물 수가 totCnt에 도달했는지 확인
                         if len(self.properties) >= tot_cnt:
                             if progress_callback:
                                 progress_callback(progress_pct, 100, f"페이지 {page}: 목표 매물 수 도달 ({len(self.properties)}/{tot_cnt})")
                             break
                         
                         # totCnt 기반으로 필요한 페이지 수 계산
-                        estimated_total_pages = (tot_cnt + 19) // 20  # 209 -> 11페이지
-                        # 예상 페이지 수에 도달했고 body < 20이면 종료 (page=11에서 body=9개면 종료)
-                        if page >= estimated_total_pages and len(page_body) < 20:
+                        estimated_total_pages = (tot_cnt + 19) // 20  # 올림 계산
+                        # 예상 페이지 수를 넘었고 body < 20이면 종료
+                        if page > estimated_total_pages and len(page_body) < 20:
                             if progress_callback:
-                                progress_callback(progress_pct, 100, f"페이지 {page}: 예상 페이지 수 도달 및 body < 20 (예상 {estimated_total_pages}페이지, 현재 {len(self.properties)}/{tot_cnt}개)")
+                                progress_callback(progress_pct, 100, f"페이지 {page}: 예상 페이지 수 초과 및 body < 20 (예상 {estimated_total_pages}페이지, 현재 {len(self.properties)}/{tot_cnt}개)")
                             break
                     
-                    # more 필드와 body 길이 기반 종료 조건 (totCnt가 없을 때만 사용)
-                    more = page_data.get("more", False)
-                    
-                    # totCnt가 없을 때: more=False이고 body < 20이면 종료
-                    # 하지만 이전 페이지들이 모두 20개였다면 한 페이지 더 시도
-                    if not tot_cnt:
-                        if not more and len(page_body) < 20:
-                            # 이전 페이지들이 모두 20개였는지 확인
-                            if all_previous_full:
-                                # 이전 페이지들이 모두 20개였고 현재 < 20이고 more=False
-                                # 실제로는 더 많은 페이지가 있을 수 있으므로 한 페이지 더 시도
-                                if progress_callback:
-                                    progress_callback(progress_pct, 100, f"페이지 {page}: more=False이고 body < 20이지만 이전 페이지가 모두 20개였으므로 한 페이지 더 시도...")
-                                all_previous_full = False  # 다음 반복에서는 이 조건 사용 안 함
-                            else:
-                                # 이전 페이지가 20개가 아니었거나 이미 한 페이지 더 시도했으므로 종료
-                                if progress_callback:
-                                    progress_callback(progress_pct, 100, f"페이지 {page}: 마지막 페이지 (more={more}, body={len(page_body)})")
-                                break
-                        elif len(page_body) == 20:
-                            # body가 20개면 다음 페이지가 있을 가능성이 높음
-                            all_previous_full = True
+                    # body가 20개면 다음 페이지가 있을 가능성이 높음
+                    if len(page_body) == 20:
+                        all_previous_full = True
                     
                     page += 1
                     
