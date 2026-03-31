@@ -293,7 +293,7 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
             lo_dong = dong_analysis.get("lowest_dong", "")
             gap = dong_analysis.get("price_gap", 0)
             if hi_dong and lo_dong and gap and not (isinstance(gap, float) and pd.isna(gap)):
-                msg += f"  <b>동별</b>  최고 {hi_dong}동  최저 {lo_dong}동  차이 {gap:.1f}억\n"
+                msg += f"  <b>동별</b>  최고 {hi_dong}  최저 {lo_dong}  차이 {gap:.1f}억\n"
 
         msg += "\n"
 
