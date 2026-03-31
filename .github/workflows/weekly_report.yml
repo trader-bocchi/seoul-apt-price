@@ -2,7 +2,7 @@ name: Weekly Apartment Price Report
 
 on:
   schedule:
-    - cron: '0 0 * * 1,6'  # 월/토 09:00 KST (= UTC 00:00)
+    - cron: '30 23 * * 0,3,5'  # 월/목/토 08:30 KST (= UTC 전날 23:30)
   workflow_dispatch:        # 수동 실행 허용
 
 jobs:

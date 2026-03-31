@@ -1,77 +1,145 @@
-# 부동산 매물 수집 및 텔레그램 알림 시스템
+# 서울/수도권 아파트 호가 리포트 시스템
 
-관심 단지의 매물 정보를 수집하고, 텔레그램으로 분석 리포트를 전송하는 시스템입니다.
+관심 단지의 네이버 부동산 매물을 수집하여 면적·층·향별로 분석하고, 텔레그램으로 자동 리포트를 전송하는 시스템입니다.
+
+## 주요 기능
+
+- **자동 수집**: 네이버 부동산 API에서 지정 지역의 아파트 매물 수집
+- **면적별 분석**: 전용면적 기준 호가 분포 (최저·최고·중앙값)
+- **상세 분석**: 내 단지의 층별·향별·동별 호가 차이 분석
+- **텔레그램 알림**: 분석 결과를 텔레그램 메시지로 자동 전송
+- **GitHub Actions**: 월/목/토 오전 8시 30분(KST) 자동 실행
 
 ## 설치
 
 ```bash
-# 가상환경 생성 및 활성화
 python -m venv venv
-venv\Scripts\activate  # Windows
+venv\Scripts\activate       # Windows
 # source venv/bin/activate  # Linux/Mac
 
-# 의존성 설치
 pip install -r requirements.txt
 ```
 
-## 환경 변수 설정
-
-`.env` 파일 생성 및 설정:
+## 환경 변수 설정 (`.env`)
 
 ```env
-# 행정구역명 설정 (필수)
-REGION_NAME=성남시 수정구 신흥동
-# 또는 여러 지역 지정 (쉼표로 구분)
-REGION_NAME=성남시 수정구 신흥동,서울시 강동구 상일동
+# 수집 지역 (쉼표로 여러 지역 지정 가능)
+REGION_NAME=경기도 성남시 수정구 신흥동, 경기도 성남시 중원구 여수동
 
-# 분석 대상 단지 설정 (필수, 텔레그램 리포트용)
-MY_HOME_COMPLEX_NAME=내_집_단지명
-TARGET_HOME_COMPLEX_NAME=관심_단지명1,관심_단지명2,관심_단지명3
+# 내 집 단지명 (상세 분석 대상)
+MY_HOME_COMPLEX_NAME=산들마을
+MY_HOME_COMPLEX_AREA=51        # 내 집 전용면적 (m²)
 
-# 텔레그램 알림 설정 (선택)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+# 관심 단지 목록 (쉼표 구분)
+TARGET_HOME_COMPLEX_NAME=산성역포레스티아, 산성역자이푸르지오1단지
+
+# 텔레그램 봇 설정
+TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
 
-# 필터 조건 (선택사항)
-FILTER_DPRC_MIN=80000   # 최소 가격: 8억 (만원 단위)
-FILTER_DPRC_MAX=130000  # 최대 가격: 13억 (만원 단위)
-FILTER_SPC_MIN=33       # 최소 면적: 33평
-FILTER_SPC_MAX=99       # 최대 면적: 99평
+# 가격 필터 (만원 단위, 선택사항)
+FILTER_DPRC_MIN=70000   # 최소 7억
+FILTER_DPRC_MAX=160000  # 최대 16억
+
+# 면적 필터 (공급면적 m² 단위 = Naver API spc1 기준, 선택사항)
+FILTER_SPC_MIN=65       # 최소 65m²
+FILTER_SPC_MAX=115      # 최대 115m²
 ```
 
-**참고:** 
-- `REGION_NAME`에 행정구역명을 입력하면 시스템이 자동으로 CSV 파일(`data/ref/국토교통부_행정구역법정동코드_20250807.CSV`)에서 `cortarNo`를 찾아 사용합니다.
-- 수동으로 `cortarNo`를 지정할 필요가 없습니다.
+> **주의:** `FILTER_SPC_MIN/MAX`는 **공급면적 m²** 단위입니다 (Naver API의 `spc1` 기준, 평 단위가 아님).
 
-## 실행
+## 실행 방법
 
-### 지역별 매물 수집
+### 인메모리 파이프라인 (GitHub Actions와 동일)
 
-지역을 지정하여 매물을 수집합니다:
+수집 → 분석 → 텔레그램 전송을 한 번에 실행합니다. 파일 저장 없음.
 
 ```bash
+python scripts/run_pipeline.py
+```
+
+### 로컬 2단계 실행 (데이터 저장 후 분석)
+
+```bash
+# 1단계: 매물 수집 및 CSV 저장
 python scripts/collect_by_region.py
-```
 
-### 텔레그램 리포트 전송
-
-수집된 데이터를 분석하여 텔레그램으로 리포트를 전송합니다:
-
-```bash
+# 2단계: 저장된 데이터로 텔레그램 리포트 전송
 python scripts/send_telegram_report.py
 ```
 
-**리포트 내용:**
-- 각 단지별 개별 분석 리포트 (평형별 가격 정보 포함)
-- 내 단지와 목표 단지 간 비교 분석 리포트
+## GitHub Actions 자동화
 
-**참고:**
-- `data/raw`에 저장된 모든 데이터를 읽어서 분석합니다
-- `MY_HOME_COMPLEX_NAME`과 `TARGET_HOME_COMPLEX_NAME`에 설정한 단지명과 일치하는 매물만 분석합니다
-- 전체 매물을 분석합니다 (최근 30일 제한 없음)
+### 자동 실행 일정
 
-## 데이터 저장 위치
+| 요일 | KST | UTC (cron) |
+|------|-----|------------|
+| 월요일 | 08:30 | 일 23:30 |
+| 목요일 | 08:30 | 수 23:30 |
+| 토요일 | 08:30 | 금 23:30 |
 
-- Raw 데이터: `data/raw/{지역명}/offers_YYYYMMDD.csv`
-- 참조 데이터: `data/ref/국토교통부_행정구역법정동코드_20250807.CSV`
-- 텔레그램 로그: `data/telegram_logs/`
+### 수동 트리거 방법
+
+**방법 1 — GitHub 웹:**
+1. 저장소 → **Actions** 탭 → **Weekly Apartment Price Report**
+2. 우측 **"Run workflow"** 버튼 클릭 → **Run workflow** 확인
+
+**방법 2 — GitHub CLI:**
+```bash
+gh workflow run weekly_report.yml --ref master
+```
+
+**방법 3 — GitHub API:**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/trader-bocchi/seoul-apt-price/actions/workflows/weekly_report.yml/dispatches \
+  -d '{"ref":"master"}'
+```
+
+### GitHub Actions 설정 (Secrets & Variables)
+
+저장소 **Settings → Secrets and variables → Actions** 에서 설정:
+
+**Secrets (민감 정보):**
+| 키 | 설명 |
+|----|------|
+| `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 |
+| `TELEGRAM_CHAT_ID` | 텔레그램 채팅 ID |
+
+**Variables (설정값):**
+| 키 | 예시 | 설명 |
+|----|------|------|
+| `REGION_NAME` | `경기도 성남시 수정구 신흥동, ...` | 수집 지역 |
+| `MY_HOME_COMPLEX_NAME` | `산들마을` | 내 집 단지명 |
+| `MY_HOME_COMPLEX_AREA` | `51` | 내 집 전용면적 (m²) |
+| `TARGET_HOME_COMPLEX_NAME` | `산성역포레스티아, ...` | 관심 단지 목록 |
+| `FILTER_DPRC_MIN` | `70000` | 최소 가격 (만원) |
+| `FILTER_DPRC_MAX` | `160000` | 최대 가격 (만원) |
+| `FILTER_SPC_MIN` | `65` | 최소 공급면적 (m²) |
+| `FILTER_SPC_MAX` | `115` | 최대 공급면적 (m²) |
+
+## 데이터 저장 위치 (로컬 실행 시)
+
+```
+data/
+├── raw/{지역명}/offers_YYYYMMDD.csv   # 수집된 매물
+├── ref/국토교통부_행정구역법정동코드_*.CSV  # 지역코드 참조
+└── telegram_logs/                     # 전송 로그
+```
+
+## 텔레그램 리포트 예시
+
+```
+📊 호가 리포트
+2026-03-31 (화) 08:30
+────────────────────────
+
+🏠 산들마을  17건
+ 51㎡  8.5~11.5억  중앙 9.1억  17건
+
+🎯 산성역포레스티아  190건
+ 59㎡  9.0~14.0억  중앙 11.5억  120건
+ 84㎡  12.0~16.0억  중앙 14.0억   70건
+```
