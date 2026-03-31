@@ -36,6 +36,9 @@ env/
 .env
 .env.local
 
+# Claude Code local settings (personal, not project-level)
+.claude/settings.local.json
+
 # Data
 data/raw/
 data/telegram_logs/
@@ -48,6 +51,7 @@ old/
 .DS_Store
 Thumbs.db
 
-# Documentation (README.md 제외)
+# Documentation (README.md, CLAUDE.md 제외)
 *.md
 !README.md
+!.claude/CLAUDE.md

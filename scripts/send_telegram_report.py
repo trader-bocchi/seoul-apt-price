@@ -70,8 +70,9 @@ def load_all_offers_by_complex(complex_names: List[str], days: int = None) -> Di
         logger.warning("No offer files found in data/raw")
         return {}
     
-    # 모든 데이터 합치기 (전체 매물, 날짜 필터링 없음)
+    # 모든 데이터 합치기 + 지역 간 중복 매물 제거 (매물번호 기준)
     combined_df = pd.concat(all_offers, ignore_index=True)
+    combined_df = combined_df.drop_duplicates(subset=["매물번호"])
     
     # 단지명으로 필터링 및 그룹화
     result = {}
