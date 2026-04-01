@@ -12,11 +12,13 @@ sys.path.insert(0, str(project_root))
 
 import logging
 import pandas as pd
+from datetime import datetime
 from src.collectors.region_collector import RegionCollector
 from src.collectors.api_client import ApiConfig
 from src.config.env_loader import EnvConfig
 from src.analyzers.complex_analyzer import ComplexAnalyzer
 from src.notifiers.telegram import TelegramNotifier
+from src.storage.csv_store import CSVStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,6 +123,14 @@ def main():
     before = len(combined_df)
     combined_df = combined_df.drop_duplicates(subset=["매물번호"])
     logger.info(f"총 {len(combined_df)}개 매물 (중복 {before - len(combined_df)}개 제거)")
+
+    # raw 데이터 저장
+    raw_dir = project_root / "data" / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_path = raw_dir / f"properties_{date_str}.csv"
+    combined_df.to_csv(raw_path, index=False, encoding="utf-8-sig")
+    logger.info(f"raw 데이터 저장: {raw_path}")
 
     # 4. 단지별 필터링 & 분석
     all_analyses = {}

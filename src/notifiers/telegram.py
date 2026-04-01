@@ -48,26 +48,42 @@ class TelegramNotifier:
         # 헤더 + 전체 블록이 한 메시지에 들어오면 단건 전송
         full = header + "".join(blocks)
         if len(full) <= _MAX_MSG_LEN:
-            return self.send_message(full)
-
-        # 초과 시: 헤더 포함 첫 메시지부터 순서대로 쌓아 전송
-        success = True
-        current = header
-        for block in blocks:
-            if len(current) + len(block) > _MAX_MSG_LEN:
+            success = self.send_message(full)
+        else:
+            # 초과 시: 헤더 포함 첫 메시지부터 순서대로 쌓아 전송
+            success = True
+            current = header
+            for block in blocks:
+                if len(current) + len(block) > _MAX_MSG_LEN:
+                    if not self.send_message(current):
+                        success = False
+                    current = block
+                else:
+                    current += block
+            if current:
                 if not self.send_message(current):
                     success = False
-                current = block
-            else:
-                current += block
-        if current:
-            if not self.send_message(current):
-                success = False
+
+        if success:
+            CSVStore.save_telegram_log("all_complexes_analysis", {
+                "sent_at": datetime.now().isoformat(),
+                "message_type": "all_complexes_analysis",
+                "complex_names": ",".join(all_analyses.keys()),
+                "message_body": full,
+            })
         return success
 
     def send_my_home_detailed_analysis(self, complex_name: str, analysis_data: Dict) -> bool:
         message = _format_my_home_detailed(complex_name, analysis_data)
-        return self.send_message(message)
+        success = self.send_message(message)
+        if success:
+            CSVStore.save_telegram_log("my_home_detailed_analysis", {
+                "sent_at": datetime.now().isoformat(),
+                "message_type": "my_home_detailed_analysis",
+                "complex_name": complex_name,
+                "message_body": message,
+            })
+        return success
 
     def send_price_summary(self, complex_name: str, summary_data: Dict) -> bool:
         message = _format_summary_message(complex_name, summary_data)
