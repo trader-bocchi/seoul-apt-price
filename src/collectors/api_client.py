@@ -11,7 +11,7 @@ from dataclasses import dataclass
 class ApiConfig:
     """API 설정"""
     base_url: str = "https://fin.land.naver.com"
-    min_delay: float = 0.1  # API 호출 간 최소 딜레이 (초)
+    min_delay: float = 0.02  # API 호출 간 최소 딜레이 (초)
     timeout: int = 10  # 타임아웃 (초)
     max_retries: int = 3  # 최대 재시도 횟수
 

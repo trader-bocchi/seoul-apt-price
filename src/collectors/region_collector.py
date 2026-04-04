@@ -641,20 +641,43 @@ class RegionCollector:
                     continue
 
                 dup_info = item.get("duplicatedArticleInfo", {})
-                # articleInfoList: 동일 조건 개별 매물 목록 (articleNumber, tradeType, priceInfo, articleDetail만 있음)
-                article_list = dup_info.get("articleInfoList", [])
-                if not article_list:
-                    article_list = [rep]
 
                 # rep에서 공유 필드 추출
                 rep_space = rep.get("spaceInfo", {})
                 supply_space = float(rep_space.get("supplySpace", 0) or 0)
                 exclusive_space = float(rep_space.get("exclusiveSpace", 0) or 0)
 
-                # 면적 필터 (공급면적 m²) — 동일 단지타입이므로 item 단위로 필터링
+                # 면적 필터 (공급면적 m²)
                 if spc_min is not None and supply_space < spc_min:
                     continue
                 if spc_max is not None and supply_space > spc_max:
+                    continue
+
+                article_no = rep.get("articleNumber", "")
+                if not article_no:
+                    continue
+
+                trade_code = rep.get("tradeType", "A1")
+                price_info = rep.get("priceInfo", {})
+
+                deal_won = int(price_info.get("dealPrice", 0) or 0)
+                rent_won = int(price_info.get("rentPrice", 0) or 0)
+                warranty_won = int(price_info.get("warrantyPrice", 0) or 0)
+
+                if trade_code == "A1":
+                    price_man = deal_won // 10000
+                    display_won = deal_won
+                elif trade_code == "B1":
+                    price_man = warranty_won // 10000
+                    display_won = warranty_won
+                else:  # B2, B3
+                    price_man = warranty_won // 10000
+                    display_won = warranty_won
+
+                # 가격 필터 (만원 단위)
+                if dprc_min is not None and price_man < dprc_min:
+                    continue
+                if dprc_max is not None and price_man > dprc_max:
                     continue
 
                 rep_coords = rep.get("address", {}).get("coordinates", {})
@@ -663,79 +686,43 @@ class RegionCollector:
                 complex_name = rep.get("complexName", "")
                 broker = rep.get("brokerInfo", {})
                 media = rep.get("articleMediaDto", rep.get("articleMedia", {}))
-                rep_detail = rep.get("articleDetail", {})
-                rep_verif = rep.get("verificationInfo", {})
-                rep_price = rep.get("priceInfo", {})
-                rep_mgmt = int(rep_price.get("managementFeeAmount", 0) or 0)
+                detail = rep.get("articleDetail", {})
+                verif = rep.get("verificationInfo", {})
+                rep_mgmt = int(price_info.get("managementFeeAmount", 0) or 0)
 
-                for article in article_list:
-                    if not article:
-                        continue
-                    # articleInfoList 항목은 per-article 필드만 갖고 있음; 없으면 rep에서 가져옴
-                    article_no = article.get("articleNumber") or rep.get("articleNumber", "")
-                    if not article_no:
-                        continue
-
-                    trade_code = article.get("tradeType") or rep.get("tradeType", "A1")
-                    price_info = article.get("priceInfo") or rep_price
-
-                    deal_won = int(price_info.get("dealPrice", 0) or 0)
-                    rent_won = int(price_info.get("rentPrice", 0) or 0)
-                    warranty_won = int(price_info.get("warrantyPrice", 0) or 0)
-
-                    if trade_code == "A1":
-                        price_man = deal_won // 10000
-                        display_won = deal_won
-                    elif trade_code == "B1":
-                        price_man = warranty_won // 10000
-                        display_won = warranty_won
-                    else:  # B2, B3
-                        price_man = warranty_won // 10000
-                        display_won = warranty_won
-
-                    # 가격 필터 (만원 단위)
-                    if dprc_min is not None and price_man < dprc_min:
-                        continue
-                    if dprc_max is not None and price_man > dprc_max:
-                        continue
-
-                    detail = article.get("articleDetail") or rep_detail
-                    verif = article.get("verificationInfo") or rep_verif
-                    dong_name = article.get("dongName") or rep.get("dongName", "")
-
-                    prop = Property(
-                        item_id=str(article_no),
-                        region_name=region_name,
-                        complex_name=complex_name,
-                        property_type="아파트",
-                        trade_type=_TRADE_NAMES.get(trade_code, trade_code),
-                        trade_type_code=trade_code,
-                        price=price_man,
-                        price_display=_price_han(display_won, rent_won, trade_code),
-                        latitude=lat,
-                        longitude=lon,
-                        min_mvi_fee=rep_mgmt // 10000,
-                        max_mvi_fee=rep_mgmt // 10000,
-                        tour_exist=bool(media.get("isVrExposed", False)),
-                        collected_at=datetime.now(),
-                        lgeo=str(complex_no),
-                        cortar_no="",
-                        flr_info=detail.get("floorInfo", ""),
-                        rent_prc=rent_won // 10000,
-                        spc1=str(supply_space),
-                        spc2=str(exclusive_space),
-                        direction=detail.get("direction", ""),
-                        atcl_cfm_ymd=verif.get("articleConfirmDate", ""),
-                        bild_nm=dong_name,
-                        cpid=broker.get("cpId", ""),
-                        cp_nm=broker.get("cpId", ""),
-                        rltr_nm=broker.get("brokerName", ""),
-                        direct_trad_yn="Y" if detail.get("directTrade") else "N",
-                        is_safe_lessor_of_hug=bool(detail.get("isSafeLessorOfHug", False)),
-                        cp_cnt=dup_info.get("realtorCount", 0),
-                        same_addr_cnt=dup_info.get("realtorCount", 0),
-                    )
-                    properties.append(prop)
+                prop = Property(
+                    item_id=str(article_no),
+                    region_name=region_name,
+                    complex_name=complex_name,
+                    property_type="아파트",
+                    trade_type=_TRADE_NAMES.get(trade_code, trade_code),
+                    trade_type_code=trade_code,
+                    price=price_man,
+                    price_display=_price_han(display_won, rent_won, trade_code),
+                    latitude=lat,
+                    longitude=lon,
+                    min_mvi_fee=rep_mgmt // 10000,
+                    max_mvi_fee=rep_mgmt // 10000,
+                    tour_exist=bool(media.get("isVrExposed", False)),
+                    collected_at=datetime.now(),
+                    lgeo=str(complex_no),
+                    cortar_no="",
+                    flr_info=detail.get("floorInfo", ""),
+                    rent_prc=rent_won // 10000,
+                    spc1=str(supply_space),
+                    spc2=str(exclusive_space),
+                    direction=detail.get("direction", ""),
+                    atcl_cfm_ymd=verif.get("articleConfirmDate", ""),
+                    bild_nm=rep.get("dongName", ""),
+                    cpid=broker.get("cpId", ""),
+                    cp_nm=broker.get("cpId", ""),
+                    rltr_nm=broker.get("brokerName", ""),
+                    direct_trad_yn="Y" if detail.get("directTrade") else "N",
+                    is_safe_lessor_of_hug=bool(detail.get("isSafeLessorOfHug", False)),
+                    cp_cnt=dup_info.get("realtorCount", 0),
+                    same_addr_cnt=dup_info.get("realtorCount", 0),
+                )
+                properties.append(prop)
             except Exception:
                 continue
 
