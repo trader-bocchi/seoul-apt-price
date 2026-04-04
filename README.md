@@ -4,8 +4,8 @@
 
 ## 주요 기능
 
-- **자동 수집**: 네이버 부동산 API에서 지정 지역의 아파트 매물 수집
-- **면적별 분석**: 전용면적 기준 호가 분포 (최저·최고·중앙값)
+- **자동 수집**: 네이버 부동산에서 지정 지역의 아파트 매물 수집
+- **면적별 분석**: 공급면적 기준 호가 분포 (최저·최고·중앙값)
 - **상세 분석**: 내 단지의 층별·향별·동별 호가 차이 분석
 - **텔레그램 알림**: 분석 결과를 텔레그램 메시지로 자동 전송
 - **GitHub Actions**: 월/목/토 오전 8시 30분(KST) 자동 실행
@@ -19,6 +19,8 @@ venv\Scripts\activate       # Windows
 
 pip install -r requirements.txt
 ```
+
+> Python 3.11+ 권장. `curl_cffi` 패키지가 포함됩니다.
 
 ## 환경 변수 설정 (`.env`)
 
@@ -41,32 +43,22 @@ TELEGRAM_CHAT_ID=your_chat_id
 FILTER_DPRC_MIN=70000   # 최소 7억
 FILTER_DPRC_MAX=160000  # 최대 16억
 
-# 면적 필터 (공급면적 m² 단위 = Naver API spc1 기준, 선택사항)
+# 면적 필터 (공급면적 m² 단위, 선택사항)
 FILTER_SPC_MIN=65       # 최소 65m²
 FILTER_SPC_MAX=115      # 최대 115m²
 ```
 
-> **주의:** `FILTER_SPC_MIN/MAX`는 **공급면적 m²** 단위입니다 (Naver API의 `spc1` 기준, 평 단위가 아님).
+> **주의:** `FILTER_SPC_MIN/MAX`는 **공급면적 m²** 단위입니다 (평 단위가 아님).
 
 ## 실행 방법
 
-### 인메모리 파이프라인 (GitHub Actions와 동일)
-
-수집 → 분석 → 텔레그램 전송을 한 번에 실행합니다. 파일 저장 없음.
+### 파이프라인 실행 (수집 → 분석 → 전송)
 
 ```bash
 python scripts/run_pipeline.py
 ```
 
-### 로컬 2단계 실행 (데이터 저장 후 분석)
-
-```bash
-# 1단계: 매물 수집 및 CSV 저장
-python scripts/collect_by_region.py
-
-# 2단계: 저장된 데이터로 텔레그램 리포트 전송
-python scripts/send_telegram_report.py
-```
+지역별 raw 데이터를 `data/raw/{지역명}/` 에 즉시 저장하며, 전체 완료 후 텔레그램으로 리포트를 전송합니다.
 
 ## GitHub Actions 자동화
 
@@ -87,15 +79,6 @@ python scripts/send_telegram_report.py
 **방법 2 — GitHub CLI:**
 ```bash
 gh workflow run weekly_report.yml --ref master
-```
-
-**방법 3 — GitHub API:**
-```bash
-curl -X POST \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  https://api.github.com/repos/trader-bocchi/seoul-apt-price/actions/workflows/weekly_report.yml/dispatches \
-  -d '{"ref":"master"}'
 ```
 
 ### GitHub Actions 설정 (Secrets & Variables)
@@ -120,26 +103,41 @@ curl -X POST \
 | `FILTER_SPC_MIN` | `65` | 최소 공급면적 (m²) |
 | `FILTER_SPC_MAX` | `115` | 최대 공급면적 (m²) |
 
-## 데이터 저장 위치 (로컬 실행 시)
+## 데이터 저장 위치
 
 ```
 data/
-├── raw/{지역명}/offers_YYYYMMDD.csv   # 수집된 매물
-├── ref/국토교통부_행정구역법정동코드_*.CSV  # 지역코드 참조
-└── telegram_logs/                     # 전송 로그
+├── raw/
+│   ├── {지역명}/
+│   │   └── properties_YYYYMMDD_HHMMSS.csv   # 지역별 수집 매물
+│   └── properties_YYYYMMDD_HHMMSS_ALL.csv   # 전체 합산 (중복 제거)
+├── ref/
+│   └── 국토교통부_행정구역법정동코드_*.CSV       # 지역코드 참조
+└── telegram_logs/                             # 전송 로그
 ```
 
 ## 텔레그램 리포트 예시
 
 ```
 📊 호가 리포트
-2026-03-31 (화) 08:30
+2026-04-04 (금) 08:30
 ────────────────────────
 
-🏠 산들마을  17건
- 51㎡  8.5~11.5억  중앙 9.1억  17건
+🏠 산들마을  30건
+ 51㎡  8.4~11.5억  중앙 9.2억  30건
 
-🎯 산성역포레스티아  190건
- 59㎡  9.0~14.0억  중앙 11.5억  120건
- 84㎡  12.0~16.0억  중앙 14.0억   70건
+🎯 산성역포레스티아  183건
+ 59㎡  9.0~14.0억  중앙 11.5억  109건
+ 84㎡  12.0~16.0억  중앙 14.0억   74건
 ```
+
+## 의존성
+
+주요 패키지:
+
+| 패키지 | 용도 |
+|--------|------|
+| `curl_cffi` | HTTP 요청 (브라우저 호환 TLS) |
+| `pandas` | 데이터 분석 |
+| `geopy` | 지역명 → 좌표 변환 |
+| `python-dotenv` | 환경 변수 로드 |
