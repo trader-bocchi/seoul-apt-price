@@ -594,6 +594,153 @@ class RegionCollector:
         
         return properties
     
+    def extract_properties_from_fin_article_list(
+        self,
+        data: Dict,
+        region_name: str,
+        complex_no: str = "",
+        dprc_min: Optional[int] = None,
+        dprc_max: Optional[int] = None,
+        spc_min: Optional[float] = None,
+        spc_max: Optional[float] = None
+    ) -> List[Property]:
+        """
+        fin.land.naver.com API 응답에서 매물 정보 추출
+        (extract_properties_from_article_list의 신 API 대응 버전)
+        """
+        _TRADE_NAMES = {"A1": "매매", "B1": "전세", "B2": "월세", "B3": "단기임대"}
+
+        def _price_han(won: int, rent_won: int, ttype: str) -> str:
+            if ttype in ("B2", "B3"):
+                dep = won // 100000000
+                dep_man = (won % 100000000) // 10000
+                rnt = rent_won // 10000
+                dep_str = (f"{dep}억 {dep_man:,}만" if dep and dep_man
+                           else f"{dep}억" if dep else f"{dep_man:,}만")
+                return f"{dep_str}/{rnt:,}만"
+            eok = won // 100000000
+            man = (won % 100000000) // 10000
+            if eok and man:
+                return f"{eok}억 {man:,}만"
+            elif eok:
+                return f"{eok}억"
+            return f"{man:,}만"
+
+        properties = []
+        if not data.get("isSuccess"):
+            return properties
+
+        items = data.get("result", {}).get("list", [])
+
+        for item in items:
+            try:
+                # representativeArticleInfo가 공유 기본 데이터 소스
+                # (supplySpace m², address.coordinates, complexName, brokerInfo 등은 여기에만 있음)
+                rep = item.get("representativeArticleInfo", {})
+                if not rep:
+                    continue
+
+                dup_info = item.get("duplicatedArticleInfo", {})
+                # articleInfoList: 동일 조건 개별 매물 목록 (articleNumber, tradeType, priceInfo, articleDetail만 있음)
+                article_list = dup_info.get("articleInfoList", [])
+                if not article_list:
+                    article_list = [rep]
+
+                # rep에서 공유 필드 추출
+                rep_space = rep.get("spaceInfo", {})
+                supply_space = float(rep_space.get("supplySpace", 0) or 0)
+                exclusive_space = float(rep_space.get("exclusiveSpace", 0) or 0)
+
+                # 면적 필터 (공급면적 m²) — 동일 단지타입이므로 item 단위로 필터링
+                if spc_min is not None and supply_space < spc_min:
+                    continue
+                if spc_max is not None and supply_space > spc_max:
+                    continue
+
+                rep_coords = rep.get("address", {}).get("coordinates", {})
+                lat = float(rep_coords.get("yCoordinate", 0.0) or 0.0)
+                lon = float(rep_coords.get("xCoordinate", 0.0) or 0.0)
+                complex_name = rep.get("complexName", "")
+                broker = rep.get("brokerInfo", {})
+                media = rep.get("articleMediaDto", rep.get("articleMedia", {}))
+                rep_detail = rep.get("articleDetail", {})
+                rep_verif = rep.get("verificationInfo", {})
+                rep_price = rep.get("priceInfo", {})
+                rep_mgmt = int(rep_price.get("managementFeeAmount", 0) or 0)
+
+                for article in article_list:
+                    if not article:
+                        continue
+                    # articleInfoList 항목은 per-article 필드만 갖고 있음; 없으면 rep에서 가져옴
+                    article_no = article.get("articleNumber") or rep.get("articleNumber", "")
+                    if not article_no:
+                        continue
+
+                    trade_code = article.get("tradeType") or rep.get("tradeType", "A1")
+                    price_info = article.get("priceInfo") or rep_price
+
+                    deal_won = int(price_info.get("dealPrice", 0) or 0)
+                    rent_won = int(price_info.get("rentPrice", 0) or 0)
+                    warranty_won = int(price_info.get("warrantyPrice", 0) or 0)
+
+                    if trade_code == "A1":
+                        price_man = deal_won // 10000
+                        display_won = deal_won
+                    elif trade_code == "B1":
+                        price_man = warranty_won // 10000
+                        display_won = warranty_won
+                    else:  # B2, B3
+                        price_man = warranty_won // 10000
+                        display_won = warranty_won
+
+                    # 가격 필터 (만원 단위)
+                    if dprc_min is not None and price_man < dprc_min:
+                        continue
+                    if dprc_max is not None and price_man > dprc_max:
+                        continue
+
+                    detail = article.get("articleDetail") or rep_detail
+                    verif = article.get("verificationInfo") or rep_verif
+                    dong_name = article.get("dongName") or rep.get("dongName", "")
+
+                    prop = Property(
+                        item_id=str(article_no),
+                        region_name=region_name,
+                        complex_name=complex_name,
+                        property_type="아파트",
+                        trade_type=_TRADE_NAMES.get(trade_code, trade_code),
+                        trade_type_code=trade_code,
+                        price=price_man,
+                        price_display=_price_han(display_won, rent_won, trade_code),
+                        latitude=lat,
+                        longitude=lon,
+                        min_mvi_fee=rep_mgmt // 10000,
+                        max_mvi_fee=rep_mgmt // 10000,
+                        tour_exist=bool(media.get("isVrExposed", False)),
+                        collected_at=datetime.now(),
+                        lgeo=str(complex_no),
+                        cortar_no="",
+                        flr_info=detail.get("floorInfo", ""),
+                        rent_prc=rent_won // 10000,
+                        spc1=str(supply_space),
+                        spc2=str(exclusive_space),
+                        direction=detail.get("direction", ""),
+                        atcl_cfm_ymd=verif.get("articleConfirmDate", ""),
+                        bild_nm=dong_name,
+                        cpid=broker.get("cpId", ""),
+                        cp_nm=broker.get("cpId", ""),
+                        rltr_nm=broker.get("brokerName", ""),
+                        direct_trad_yn="Y" if detail.get("directTrade") else "N",
+                        is_safe_lessor_of_hug=bool(detail.get("isSafeLessorOfHug", False)),
+                        cp_cnt=dup_info.get("realtorCount", 0),
+                        same_addr_cnt=dup_info.get("realtorCount", 0),
+                    )
+                    properties.append(prop)
+            except Exception:
+                continue
+
+        return properties
+
     def collect_properties_by_region(
         self,
         region_name: str,
@@ -639,74 +786,46 @@ class RegionCollector:
         
         region_info = None
         
-        # 방법 0: 행정구역명에서 cortarNo 자동 생성 시도 (가장 빠름)
+        # 방법 0: CSV에서 cortarNo 조회 + geopy 좌표 (가장 빠름, 검증 불필요 — 정부 공식 데이터)
         if progress_callback:
             progress_callback(0, 100, "행정구역명에서 cortarNo 자동 생성 시도...")
-        
+
         generated_cortar_no = self.generate_cortar_no_from_region_name(region_name)
         if generated_cortar_no:
             print(f"[DEBUG] 행정구역명에서 생성한 cortarNo: {generated_cortar_no}")
-            if progress_callback:
-                progress_callback(1, 100, f"생성된 cortarNo: {generated_cortar_no}")
-            
-            # 생성된 cortarNo로 검증 시도
+            coords_lat, coords_lon = None, None
             try:
-                # geopy로 좌표 얻기
                 from geopy.geocoders import Nominatim
                 geolocator = Nominatim(user_agent="naver_land_crawler")
                 location = geolocator.geocode(region_name, country_codes="kr", timeout=10)
-                
                 if location:
-                    test_lat = location.latitude
-                    test_lon = location.longitude
-                    
-                    zoom = 14
-                    lat_size = 0.042
-                    lon_size = 0.073
-                    btm = test_lat - lat_size
-                    lft = test_lon - lon_size
-                    top = test_lat + lat_size
-                    rgt = test_lon + lon_size
-                    
-                    # 생성된 cortarNo로 API 호출하여 검증
-                    test_data = self.api_client.get_article_list_by_region(
-                        cortar_no=generated_cortar_no,
-                        lat=test_lat,
-                        lon=test_lon,
-                        zoom=zoom,
-                        btm=btm,
-                        lft=lft,
-                        top=top,
-                        rgt=rgt,
-                        rlet_tp_cd="APT",
-                        trad_tp_cd="A1",
-                        page=1
-                    )
-                    
-                    if test_data.get("code") == "success":
-                        body = test_data.get("body", [])
-                        if body and len(body) > 0:
-                            # body에서 실제 cortarNo 확인
-                            actual_cortar_no = body[0].get("cortarNo")
-                            if actual_cortar_no:
-                                # 생성된 cortarNo와 실제 cortarNo 비교
-                                if actual_cortar_no.startswith(generated_cortar_no[:6]) or generated_cortar_no.startswith(actual_cortar_no[:6]):
-                                    if progress_callback:
-                                        progress_callback(2, 100, f"✅ 생성된 cortarNo 검증 성공: {actual_cortar_no}")
-                                    print(f"[DEBUG] 생성된 cortarNo 검증 성공: {actual_cortar_no} (생성: {generated_cortar_no})")
-                                    
-                                    region_info = {
-                                        "cortarNo": actual_cortar_no,  # 실제 cortarNo 사용
-                                        "lat": test_lat,
-                                        "lon": test_lon,
-                                        "regionName": region_name,
-                                        "cortarNm": "",
-                                        "cityNm": "",
-                                        "dvsnNm": "",
-                                        "secNm": ""
-                                    }
+                    coords_lat, coords_lon = location.latitude, location.longitude
+                    print(f"[DEBUG] geopy 좌표: ({coords_lat}, {coords_lon})")
             except Exception as e:
-                print(f"[DEBUG] 생성된 cortarNo 검증 실패: {str(e)}")
+                print(f"[DEBUG] geopy 실패: {e}")
+
+            if not coords_lat:
+                # 지역명 기반 기본 좌표 (geopy 실패 시)
+                if "서울" in region_name:
+                    coords_lat, coords_lon = 37.5665, 126.9780
+                elif "성남" in region_name:
+                    coords_lat, coords_lon = 37.4201, 127.1266
+                elif "경기" in region_name:
+                    coords_lat, coords_lon = 37.4138, 127.5183
+                else:
+                    coords_lat, coords_lon = 37.5665, 126.9780
+                print(f"[DEBUG] 기본 좌표 사용: ({coords_lat}, {coords_lon})")
+
+            region_info = {
+                "cortarNo": generated_cortar_no,
+                "lat": coords_lat,
+                "lon": coords_lon,
+                "regionName": region_name,
+                "cortarNm": "",
+                "cityNm": "",
+                "dvsnNm": "",
+                "secNm": ""
+            }
         
         # 방법 1: get_cluster_list API로 cortarNo 조회 (보조 수단)
         if not region_info:
@@ -715,163 +834,7 @@ class RegionCollector:
             
             region_info = self.get_region_info(region_name, debug=True)  # debug=True로 상세 로그 출력
         
-        # 방법 2: geopy로 좌표 얻어서 articleList API에서 cortarNo 자동 추출 (보조 수단)
-        if not region_info:
-            if progress_callback:
-                progress_callback(2, 100, "geopy로 좌표 획득 후 articleList API에서 cortarNo 자동 추출 시도...")
-            
-            zoom = 14
-            lat_size = 0.042
-            lon_size = 0.073
-            
-            # geopy로 좌표 획득 시도
-            test_lat = None
-            test_lon = None
-            
-            try:
-                from geopy.geocoders import Nominatim
-                geolocator = Nominatim(user_agent="naver_land_crawler")
-                location = geolocator.geocode(region_name, country_codes="kr", timeout=10)
-                
-                if location:
-                    test_lat = location.latitude
-                    test_lon = location.longitude
-                    
-                    if progress_callback:
-                        progress_callback(3, 100, f"좌표 획득: ({test_lat}, {test_lon})")
-                    print(f"[DEBUG] geopy 좌표 획득: ({test_lat}, {test_lon})")
-            except Exception as e:
-                if progress_callback:
-                    progress_callback(3, 100, f"geopy 좌표 획득 실패: {str(e)}")
-                print(f"[DEBUG] geopy 좌표 획득 실패: {str(e)}")
-            
-            # geopy 실패 시 지역명 기반 대략적인 좌표 사용
-            if not test_lat or not test_lon:
-                if "서울" in region_name:
-                    if "강서" in region_name:
-                        test_lat, test_lon = 37.5500, 126.8500  # 강서구 대략 좌표
-                    elif "강동" in region_name:
-                        test_lat, test_lon = 37.5500, 127.1700
-                    elif "강남" in region_name:
-                        test_lat, test_lon = 37.5172, 127.0473
-                    elif "성동" in region_name:
-                        test_lat, test_lon = 37.5480, 127.0220
-                    else:
-                        test_lat, test_lon = 37.5665, 126.9780  # 서울시청 좌표
-                elif "성남" in region_name:
-                    test_lat, test_lon = 37.4201, 127.1266
-                else:
-                    test_lat, test_lon = 37.5665, 126.9780  # 기본 서울 좌표
-                
-                if progress_callback:
-                    progress_callback(3, 100, f"지역명 기반 좌표 사용: ({test_lat}, {test_lon})")
-                print(f"[DEBUG] 지역명 기반 좌표 사용: ({test_lat}, {test_lon})")
-            
-            if test_lat and test_lon:
-                btm = test_lat - lat_size
-                lft = test_lon - lon_size
-                top = test_lat + lat_size
-                rgt = test_lon + lon_size
-                
-                try:
-                    if progress_callback:
-                        progress_callback(4, 100, "articleList API 호출 중 (cortarNo 없이)...")
-                    
-                    test_data = self.api_client.get_article_list_by_region(
-                        cortar_no="",  # cortarNo 없이 호출하여 자동으로 추출
-                        lat=test_lat,
-                        lon=test_lon,
-                        zoom=zoom,
-                        btm=btm,
-                        lft=lft,
-                        top=top,
-                        rgt=rgt,
-                        rlet_tp_cd="APT",
-                        trad_tp_cd="A1",
-                        page=1
-                    )
-                    
-                    if test_data.get("code") == "success":
-                        body = test_data.get("body", [])
-                        if body and len(body) > 0:
-                            # 각 매물에서 cortarNo 추출 (첫 번째 매물의 cortarNo 사용)
-                            extracted_cortar_no = body[0].get("cortarNo")
-                            if extracted_cortar_no:
-                                if progress_callback:
-                                    progress_callback(5, 100, f"✅ articleList API에서 cortarNo 자동 추출: {extracted_cortar_no}")
-                                print(f"[DEBUG] articleList API에서 추출한 cortarNo: {extracted_cortar_no}")
-                                
-                                region_info = {
-                                    "cortarNo": extracted_cortar_no,
-                                    "lat": test_lat,
-                                    "lon": test_lon,
-                                    "regionName": region_name,
-                                    "cortarNm": "",
-                                    "cityNm": "",
-                                    "dvsnNm": "",
-                                    "secNm": ""
-                                }
-                            else:
-                                if progress_callback:
-                                    progress_callback(5, 100, "⚠️ articleList API 응답에 cortarNo가 없음")
-                                print(f"[DEBUG] ⚠️ articleList API 응답에 cortarNo가 없음")
-                        else:
-                            if progress_callback:
-                                progress_callback(5, 100, "⚠️ articleList API 응답에 매물이 없음")
-                            print(f"[DEBUG] ⚠️ articleList API 응답에 매물이 없음")
-                    else:
-                        if progress_callback:
-                            progress_callback(5, 100, f"⚠️ articleList API 응답 실패: {test_data.get('code')}")
-                        print(f"[DEBUG] ⚠️ articleList API 응답 실패: {test_data.get('code')}")
-                except Exception as e:
-                    if progress_callback:
-                        progress_callback(4, 100, f"articleList API 호출 실패: {str(e)}")
-                    print(f"[DEBUG] articleList API 호출 실패: {str(e)}")
-            
-            if region_info:
-                extracted_cortar_no = region_info.get("cortarNo")
-                if extracted_cortar_no:
-                    print(f"[DEBUG] get_cluster_list에서 추출한 cortarNo: {extracted_cortar_no}")
-                    
-                    # 검증: articleList API로 이 cortarNo가 유효한지 확인
-                    try:
-                        test_lat = region_info.get("lat")
-                        test_lon = region_info.get("lon")
-                        zoom = 14
-                        lat_size = 0.042
-                        lon_size = 0.073
-                        btm = test_lat - lat_size
-                        lft = test_lon - lon_size
-                        top = test_lat + lat_size
-                        rgt = test_lon + lon_size
-                        
-                        test_data = self.api_client.get_article_list_by_region(
-                            cortar_no=extracted_cortar_no,
-                            lat=test_lat,
-                            lon=test_lon,
-                            zoom=zoom,
-                            btm=btm,
-                            lft=lft,
-                            top=top,
-                            rgt=rgt,
-                            rlet_tp_cd="APT",
-                            trad_tp_cd="A1",
-                            page=1
-                        )
-                        
-                        if test_data.get("code") == "success":
-                            body = test_data.get("body", [])
-                            if body and len(body) > 0:
-                                # body에서 실제 cortarNo 확인
-                                actual_cortar_no = body[0].get("cortarNo")
-                                if actual_cortar_no and actual_cortar_no != extracted_cortar_no:
-                                    print(f"[DEBUG] ⚠️ cortarNo 불일치: get_cluster_list={extracted_cortar_no}, articleList={actual_cortar_no}")
-                                    print(f"[DEBUG] articleList API의 cortarNo를 사용: {actual_cortar_no}")
-                                    region_info["cortarNo"] = actual_cortar_no  # articleList의 cortarNo로 교체
-                                else:
-                                    print(f"[DEBUG] ✅ cortarNo 일치 확인: {extracted_cortar_no}")
-                    except Exception as e:
-                        print(f"[DEBUG] cortarNo 검증 실패: {str(e)}")
+        # (방법 2 제거됨: m.land.naver.com/cluster/ajax/articleList는 null을 반환하여 폐기됨)
         
         if not region_info:
             error_msg = (
@@ -911,341 +874,88 @@ class RegionCollector:
         zoom = 15 if parsed.get("dong") else 14  # 동이 있으면 15, 없으면 14
         btm, lft, top, rgt = self.calculate_region_bounds(center_lat, center_lon, zoom)
         
-        # 3단계: 첫 페이지 조회하여 총 매물 개수 확인
-        # 핵심: totCnt는 첫 페이지 요청 시 필요하지 않음
-        # 사용자가 제공한 URL 예시를 보면 totCnt=209가 파라미터로 있지만,
-        # 실제로는 첫 페이지 요청 시 totCnt 없이 요청하고, 페이지네이션을 통해 모든 페이지 수집
-        
+        # 3단계: fin.land.naver.com complexClusters로 단지 번호 목록 조회
         if progress_callback:
-            progress_callback(10, 100, f"첫 페이지 조회 중... (경계: btm={btm:.6f}, lft={lft:.6f}, top={top:.6f}, rgt={rgt:.6f})")
-            progress_callback(11, 100, f"총 매물 수는 페이지네이션을 통해 자동 추정")
-        
+            progress_callback(10, 100, f"단지 목록 조회 중... (cortarNo: {cortar_no})")
+
+        trade_types_list = [t for t in trad_tp_cd.split(":") if t]
+
         try:
-            # 디버깅: 첫 페이지 요청 URL 구성
-            import urllib.parse
-            first_page_params = {
-                "rletTpCd": rlet_tp_cd,
-                "tradTpCd": trad_tp_cd,
-                "z": str(zoom),
-                "lat": str(center_lat),
-                "lon": str(center_lon),
-                "btm": str(btm),
-                "lft": str(lft),
-                "top": str(top),
-                "rgt": str(rgt),
-                "showR0": "",
-                "cortarNo": cortar_no
-            }
-            # 첫 페이지 요청 URL 구성 (totCnt는 동적으로 추출하므로 포함하지 않음)
-            first_page_url = f"https://m.land.naver.com/cluster/ajax/articleList?{urllib.parse.urlencode(first_page_params)}"
-            if progress_callback:
-                progress_callback(12, 100, f"[DEBUG] 첫 페이지 요청 URL: {first_page_url}")
-            print(f"[DEBUG] 첫 페이지 요청 URL: {first_page_url}")
-            
-            # 첫 페이지 요청: totCnt 없이 요청 (API 응답에서 동적으로 추출)
-            first_page_data = self.api_client.get_article_list_by_region(
-                cortar_no=cortar_no,
-                lat=center_lat,
-                lon=center_lon,
-                zoom=zoom,
+            cluster_data = self.api_client.get_complex_clusters_fin(
                 btm=btm,
                 lft=lft,
                 top=top,
                 rgt=rgt,
-                rlet_tp_cd=rlet_tp_cd,
-                trad_tp_cd=trad_tp_cd,
-                page=1,
-                tot_cnt=None,  # totCnt는 API 응답에서 동적으로 추출
-                dprc_min=dprc_min,
-                dprc_max=dprc_max,
-                spc_min=spc_min,
-                spc_max=spc_max
+                trade_types=trade_types_list,
+                spc_min=float(spc_min) if spc_min is not None else None,
+                spc_max=float(spc_max) if spc_max is not None else None,
+                precision=15
             )
-            
-            # API 응답 확인
-            if first_page_data.get("code") != "success":
-                error_msg = f"API 응답이 성공이 아닙니다: {first_page_data.get('code')}"
-                if progress_callback:
-                    progress_callback(15, 100, f"오류: {error_msg}")
-                raise Exception(error_msg)
-            
-            # 디버깅: 첫 페이지 응답 로그 (전체 응답 구조 확인)
+            if not cluster_data.get("isSuccess"):
+                raise Exception(f"complexClusters 응답 실패: isSuccess=False")
+
+            # 응답 구조에 따라 리스트 추출 (complexes 또는 list 키)
+            result_data = cluster_data.get("result", {})
+            complex_list = (
+                result_data.get("complexes")
+                or result_data.get("list")
+                or result_data.get("clusters")
+                or []
+            )
+            if not isinstance(complex_list, list):
+                complex_list = []
+
             if progress_callback:
-                debug_msg = f"[DEBUG] 첫 페이지 응답: code={first_page_data.get('code')}, body길이={len(first_page_data.get('body', []))}, more={first_page_data.get('more', False)}"
-                debug_msg += f", 응답totCnt={first_page_data.get('totCnt')}, data.totCnt={first_page_data.get('data', {}).get('totCnt')}"
-                # 응답의 모든 키 확인
-                debug_msg += f", 응답키={list(first_page_data.keys())}"
-                progress_callback(18, 100, debug_msg)
-            
-            # 첫 페이지에서 매물 추출 (디버그 모드)
-            # URL 생성 시 사용한 cortarNo를 전달하여 저장 시 일관성 유지
-            first_page_properties = self.extract_properties_from_article_list(
-                first_page_data, region_name, debug=True, default_cortar_no=cortar_no
-            )
-            self.properties.extend(first_page_properties)
-            
-            # 총 매물 개수 확인 (응답에서 추출하거나 body 길이로 추정)
-            body = first_page_data.get("body", [])
-            items_per_page = len(body)
-            more = first_page_data.get("more", False)
-            
-            
-            # totCnt 추출 시도 (API 응답에서 동적으로 추출)
-            # totCnt는 동적으로 변할 수 있으므로 하드코딩하지 않고 API 응답에서 추출
-            tot_cnt = (
-                first_page_data.get("totCnt") or
-                first_page_data.get("data", {}).get("totCnt") or
-                first_page_data.get("result", {}).get("totCnt") or
-                first_page_data.get("totalCount") or
-                first_page_data.get("total") or
-                # 응답 전체를 순회하며 totCnt 찾기
-                self._find_tot_cnt_in_response(first_page_data)
-            )
-            
-            # totCnt를 정수로 변환
-            if tot_cnt is not None:
-                try:
-                    tot_cnt = int(tot_cnt)
-                    if progress_callback:
-                        progress_callback(19, 100, f"첫 페이지 응답에서 totCnt 추출: {tot_cnt}")
-                except (ValueError, TypeError):
-                    tot_cnt = None
-            
-            if tot_cnt is None:
-                # totCnt가 없으면 페이지네이션을 통해 추정
-                # more=True이면 계속 수집, more=False이고 body < 20이면 마지막 페이지
-                if progress_callback:
-                    progress_callback(19, 100, f"totCnt 없음, 페이지네이션으로 모든 페이지 수집 (more={more}, body={items_per_page})")
-                # 페이지네이션을 통해 totCnt 추정: 첫 페이지 body 길이와 more 필드로 추정
-                # more=True이면 최소 20개 이상, more=False이고 body < 20이면 body 길이가 총 개수
-                if not more and items_per_page < 20:
-                    tot_cnt = items_per_page
-                    if progress_callback:
-                        progress_callback(19, 100, f"첫 페이지가 마지막 페이지로 추정: {tot_cnt}개")
-                # more=True이면 페이지네이션을 통해 추정 (나중에 업데이트)
-            
-            if progress_callback:
-                if tot_cnt:
-                    progress_callback(20, 100, f"첫 페이지 수집 완료: {items_per_page}개 매물 (총 {tot_cnt}개 예상, more={more})")
-                else:
-                    progress_callback(20, 100, f"첫 페이지 수집 완료: {items_per_page}개 매물 (more={more}, 계속 수집 중...)")
-            
-            # 디버깅: 매물이 없으면 경고
-            if items_per_page == 0:
-                if progress_callback:
-                    progress_callback(21, 100, f"[경고] 첫 페이지에 매물이 없습니다. API 응답: {first_page_data}")
+                progress_callback(15, 100, f"단지 {len(complex_list)}개 발견, 매물 수집 시작...")
         except Exception as e:
-            error_msg = f"첫 페이지 조회 실패: {str(e)}"
+            raise Exception(f"단지 목록 조회 실패: {str(e)}")
+
+        # 4단계: 각 단지별 fin.land.naver.com POST API로 매물 조회
+        total_complexes = len(complex_list)
+
+        for idx, cluster in enumerate(complex_list):
+            # complexClusters 응답에서 complexNumber 추출
+            complex_no = str(
+                cluster.get("complexNumber")
+                or cluster.get("complexNo")
+                or cluster.get("id")
+                or ""
+            )
+            if not complex_no:
+                continue
+
             if progress_callback:
-                progress_callback(15, 100, f"오류: {error_msg}")
-            raise Exception(error_msg)
-        
-        # 4단계: 페이지네이션으로 나머지 페이지 수집
-        # ApiRef.md 기준: more=true이거나 body 길이가 20개인 경우 다음 페이지가 존재할 수 있음
-        # 모든 페이지를 수집해야 하므로 more=False이고 body < 20일 때까지 계속 수집
-        if more or items_per_page >= 20:
-            page = 2
-            max_pages = 100  # 안전장치: 최대 100페이지까지
-            
-            # 이전 페이지들이 모두 20개였는지 추적
-            all_previous_full = items_per_page == 20
-            
-            # totCnt가 있으면 총 페이지 수 계산
-            if tot_cnt:
-                estimated_total_pages = (tot_cnt + 19) // 20  # 올림 계산: 209 -> 11페이지
-                max_pages = min(estimated_total_pages + 2, max_pages)  # 여유분 2페이지
-                if progress_callback:
-                    progress_callback(21, 100, f"총 {tot_cnt}개 매물 예상, 약 {estimated_total_pages}페이지 수집 예정")
-            else:
-                if progress_callback:
-                    progress_callback(21, 100, f"totCnt 없음, more와 body 길이로 판단하여 수집")
-            
-            while page <= max_pages:
-                if progress_callback:
-                    if tot_cnt:
-                        # totCnt 기반 진행률 계산
-                        expected_total = tot_cnt
-                        current_total = len(self.properties)
-                        progress_pct = min(20 + int((current_total / expected_total) * 75), 95)
-                    else:
-                        # totCnt 없으면 페이지 기반 진행률
-                        progress_pct = min(20 + int((page - 1) / max_pages * 75), 95)
-                    
-                    progress_callback(
-                        progress_pct, 100,
-                        f"페이지 {page} 수집 중... (현재 {len(self.properties)}개 매물" + 
-                        (f"/{tot_cnt}개" if tot_cnt else "") + ")"
-                    )
-                
+                pct = 15 + int((idx / max(total_complexes, 1)) * 75)
+                progress_callback(pct, 100, f"단지 {idx+1}/{total_complexes} 수집 중 (complexNo: {complex_no})...")
+
+            # cursor 기반 페이지네이션
+            last_info_cursor: list = []
+            while True:
                 try:
-                    # 디버깅: 요청 파라미터 로그
-                    if progress_callback:
-                        debug_msg = f"[DEBUG] 페이지 {page} 요청: totCnt={tot_cnt}, 현재 수집된 매물={len(self.properties)}"
-                        if tot_cnt:
-                            estimated_pages = (tot_cnt + 19) // 20
-                            debug_msg += f", 예상 페이지={estimated_pages}"
-                        progress_callback(progress_pct, 100, debug_msg)
-                    
-                    # 디버깅: 실제 요청 URL 구성 (사용자가 제공한 URL 형식과 비교)
-                    import urllib.parse
-                    request_params = {
-                        "rletTpCd": rlet_tp_cd,
-                        "tradTpCd": trad_tp_cd,
-                        "z": str(zoom),
-                        "lat": str(center_lat),
-                        "lon": str(center_lon),
-                        "btm": str(btm),
-                        "lft": str(lft),
-                        "top": str(top),
-                        "rgt": str(rgt),
-                        "showR0": "",
-                        "cortarNo": cortar_no
-                    }
-                    if tot_cnt:
-                        request_params["totCnt"] = str(tot_cnt)
-                    if page > 1:
-                        request_params["page"] = str(page)
-                    
-                    request_url = f"https://m.land.naver.com/cluster/ajax/articleList?{urllib.parse.urlencode(request_params)}"
-                    if progress_callback:
-                        progress_callback(progress_pct, 100, f"[DEBUG] 페이지 {page} 요청 URL: {request_url}")
-                    
-                    # totCnt가 있으면 각 페이지 요청 시 전달
-                    # 사용자가 제공한 URL처럼 totCnt를 파라미터로 포함
-                    # totCnt가 없으면 None으로 전달 (API가 자동 계산)
-                    page_data = self.api_client.get_article_list_by_region(
-                        cortar_no=cortar_no,
-                        lat=center_lat,
-                        lon=center_lon,
-                        zoom=zoom,
-                        btm=btm,
-                        lft=lft,
-                        top=top,
-                        rgt=rgt,
-                        rlet_tp_cd=rlet_tp_cd,
-                        trad_tp_cd=trad_tp_cd,
-                        page=page,
-                        tot_cnt=tot_cnt,  # totCnt 전달 (있으면 포함, 없으면 None)
+                    page_data = self.api_client.get_complex_article_list_fin(
+                        complex_no=complex_no,
+                        trade_types=trade_types_list,
+                        last_info=last_info_cursor,
+                        size=30
+                    )
+                    page_props = self.extract_properties_from_fin_article_list(
+                        page_data,
+                        region_name,
+                        complex_no=complex_no,
                         dprc_min=dprc_min,
                         dprc_max=dprc_max,
-                        spc_min=spc_min,
-                        spc_max=spc_max
+                        spc_min=float(spc_min) if spc_min is not None else None,
+                        spc_max=float(spc_max) if spc_max is not None else None
                     )
-                    
-                    # 디버깅: API 응답 로그
-                    response_code = page_data.get("code")
-                    response_tot_cnt = page_data.get("totCnt")
-                    page_body = page_data.get("body", [])
-                    more = page_data.get("more", False)
-                    
-                    if progress_callback:
-                        debug_msg = f"[DEBUG] 페이지 {page} 응답: code={response_code}, body길이={len(page_body) if page_body else 0}, more={more}, 응답totCnt={response_tot_cnt}"
-                        progress_callback(progress_pct, 100, debug_msg)
-                    
-                    # API 응답 확인
-                    if response_code != "success":
-                        if progress_callback:
-                            progress_callback(progress_pct, 100, f"페이지 {page} 응답 오류: {response_code}, 전체 응답: {page_data}")
+                    self.properties.extend(page_props)
+
+                    result = page_data.get("result", {})
+                    if not result.get("hasNextPage"):
                         break
-                    
-                    # 응답에서 totCnt 업데이트 (있으면) - 먼저 확인
-                    # 두 번째 페이지부터는 첫 페이지에서 추정한 totCnt를 사용하여 요청
-                    if response_tot_cnt and not tot_cnt:
-                        try:
-                            tot_cnt = int(response_tot_cnt)
-                            if progress_callback:
-                                progress_callback(progress_pct, 100, f"페이지 {page}: 총 매물 수 확인됨 ({tot_cnt}개)")
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # totCnt가 없으면 페이지네이션을 통해 추정
-                    # 현재까지 수집된 매물 수와 more 필드로 추정
-                    if not tot_cnt:
-                        if not more and len(page_body) < 20:
-                            # more=False이고 body < 20이면 마지막 페이지
-                            # 현재까지 수집된 매물 수가 총 개수
-                            tot_cnt = len(self.properties)
-                            if progress_callback:
-                                progress_callback(progress_pct, 100, f"페이지 {page}: totCnt 추정 완료 ({tot_cnt}개, 마지막 페이지)")
-                        elif not more and len(page_body) == 20:
-                            # more=False이고 body=20이면 다음 페이지가 있을 수 있음
-                            # 한 페이지 더 시도
-                            pass
-                    
-                    # body가 0개면 종료 (totCnt가 없거나 예상 페이지 수를 넘었을 때만)
-                    if len(page_body) == 0:
-                        if tot_cnt:
-                            estimated_total_pages = (tot_cnt + 19) // 20
-                            if page <= estimated_total_pages:
-                                if progress_callback:
-                                    progress_callback(progress_pct, 100, f"페이지 {page}: 빈 페이지이지만 예상 페이지 수 이내 ({page}/{estimated_total_pages}), 다음 페이지 시도...")
-                                page += 1
-                                continue
-                        if progress_callback:
-                            progress_callback(progress_pct, 100, f"페이지 {page}: 빈 페이지")
+                    last_info_cursor = result.get("lastInfo", [])
+                    if not last_info_cursor:
                         break
-                    
-                    # 매물 추출 및 추가 (중요: 종료 조건 체크 전에 먼저 추가)
-                    # URL 생성 시 사용한 cortarNo를 전달하여 저장 시 일관성 유지
-                    page_properties = self.extract_properties_from_article_list(
-                        page_data, region_name, default_cortar_no=cortar_no
-                    )
-                    if not page_properties:
-                        # totCnt가 있으면 예상 페이지 수까지는 계속 시도
-                        if tot_cnt:
-                            estimated_total_pages = (tot_cnt + 19) // 20
-                            if page <= estimated_total_pages:
-                                if progress_callback:
-                                    progress_callback(progress_pct, 100, f"페이지 {page}: 매물 추출 실패했지만 예상 페이지 수 이내 ({page}/{estimated_total_pages}), 다음 페이지 시도...")
-                                page += 1
-                                continue
-                        if progress_callback:
-                            progress_callback(progress_pct, 100, f"페이지 {page}: 매물 추출 실패 (body는 있지만 추출된 매물 없음)")
-                        break
-                    
-                    # 디버깅: 추출된 매물 수 로그
-                    if progress_callback:
-                        progress_callback(progress_pct, 100, f"[DEBUG] 페이지 {page}: 추출된 매물 {len(page_properties)}개")
-                    
-                    # 매물 추가 (중요: 종료 조건 체크 전에 먼저 추가)
-                    self.properties.extend(page_properties)
-                    
-                    # ApiRef.md 기준: more=true이거나 body=20이면 다음 페이지가 존재할 수 있음
-                    # 종료 조건: more=False이고 body < 20일 때만 종료
-                    more = page_data.get("more", False)
-                    
-                    # 우선순위: more 필드와 body 길이를 우선 확인 (totCnt보다 정확함)
-                    if not more and len(page_body) < 20:
-                        # more=False이고 body < 20이면 마지막 페이지
-                        if progress_callback:
-                            progress_callback(progress_pct, 100, f"페이지 {page}: 마지막 페이지 (more={more}, body={len(page_body)})")
-                        break
-                    
-                    # totCnt가 있으면 추가 검증 (더블 체크)
-                    if tot_cnt:
-                        # 수집한 매물 수가 totCnt에 도달했는지 확인
-                        if len(self.properties) >= tot_cnt:
-                            if progress_callback:
-                                progress_callback(progress_pct, 100, f"페이지 {page}: 목표 매물 수 도달 ({len(self.properties)}/{tot_cnt})")
-                            break
-                        
-                        # totCnt 기반으로 필요한 페이지 수 계산
-                        estimated_total_pages = (tot_cnt + 19) // 20  # 올림 계산
-                        # 예상 페이지 수를 넘었고 body < 20이면 종료
-                        if page > estimated_total_pages and len(page_body) < 20:
-                            if progress_callback:
-                                progress_callback(progress_pct, 100, f"페이지 {page}: 예상 페이지 수 초과 및 body < 20 (예상 {estimated_total_pages}페이지, 현재 {len(self.properties)}/{tot_cnt}개)")
-                            break
-                    
-                    # body가 20개면 다음 페이지가 있을 가능성이 높음
-                    if len(page_body) == 20:
-                        all_previous_full = True
-                    
-                    page += 1
-                    
-                except Exception as e:
-                    if progress_callback:
-                        progress_callback(progress_pct, 100, f"페이지 {page} 조회 오류: {str(e)}")
+                except Exception:
                     break
         
         # 5단계: 중복 제거

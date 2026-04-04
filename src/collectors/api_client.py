@@ -28,7 +28,7 @@ class NaverLandApiClient:
         self.session.headers.update({
             "Accept": "application/json",
             "Referer": "https://m.land.naver.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
         })
     
     def _wait_if_needed(self):
@@ -119,6 +119,186 @@ class NaverLandApiClient:
         
         raise Exception("API 호출 실패: 최대 재시도 횟수 초과")
     
+    def _ensure_fin_session(self):
+        """fin.land.naver.com 세션 쿠키 초기화 (NNB 등)"""
+        if not getattr(self, '_fin_session_initialized', False):
+            try:
+                self.session.get(
+                    "https://fin.land.naver.com/",
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"},
+                    timeout=self.config.timeout,
+                    allow_redirects=True
+                )
+                self._fin_session_initialized = True
+                time.sleep(1.0)
+            except Exception:
+                self._fin_session_initialized = True  # 실패해도 계속 진행
+
+    def get_complex_clusters_fin(
+        self,
+        btm: float,
+        lft: float,
+        top: float,
+        rgt: float,
+        trade_types: Optional[list] = None,
+        spc_min: Optional[float] = None,
+        spc_max: Optional[float] = None,
+        real_estate_types: Optional[list] = None,
+        precision: int = 15
+    ) -> Dict:
+        """
+        fin.land.naver.com POST API로 범위 내 단지 목록 조회
+        (m.land.naver.com/cluster/clusterList의 fin API 대체)
+
+        Args:
+            btm/lft/top/rgt: 지도 경계 좌표
+            trade_types: 거래 유형 목록 (기본: ["A1"])
+            spc_min/spc_max: 공급면적 범위 m²
+            real_estate_types: 부동산 유형 (기본: ["A01","A04","B01"])
+            precision: 클러스터 정밀도 (높을수록 개별 단지, 기본: 15)
+
+        Returns:
+            {"isSuccess": bool, "result": {"list": [{"complexNumber":..., ...}]}}
+        """
+        url = "https://fin.land.naver.com/front-api/v1/complex/complexClusters"
+        _empty = {"isSuccess": False, "result": {"list": []}}
+
+        space_filter: Dict = {}
+        if spc_min is not None:
+            space_filter["min"] = spc_min
+        if spc_max is not None:
+            space_filter["max"] = spc_max
+
+        body = {
+            "filter": {
+                "tradeTypes": trade_types or ["A1"],
+                "realEstateTypes": real_estate_types or ["A01", "A04", "B01"],
+                "roomCount": [],
+                "bathRoomCount": [],
+                "optionTypes": [],
+                "moveInTypes": [],
+                "space": space_filter if space_filter else {"min": 0, "max": 200},
+                "filtersExclusiveSpace": False,
+                "floorTypes": [],
+                "directionTypes": [],
+                "hasArticlePhoto": False,
+                "isAuthorizedByOwner": False,
+                "parkingTypes": [],
+                "entranceTypes": [],
+                "hasArticle": False
+            },
+            "boundingBox": {
+                "left": lft,
+                "right": rgt,
+                "top": top,
+                "bottom": btm
+            },
+            "precision": precision,
+            "userChannelType": "PC"
+        }
+
+        fin_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://fin.land.naver.com/",
+            "Origin": "https://fin.land.naver.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        }
+
+        self._ensure_fin_session()
+        self._wait_if_needed()
+
+        for attempt in range(self.config.max_retries):
+            try:
+                response = self.session.post(url, json=body, headers=fin_headers, timeout=self.config.timeout)
+                if response.status_code == 429:
+                    return _empty
+                response.raise_for_status()
+                result = response.json()
+                return result if result is not None else _empty
+            except requests.exceptions.RequestException as e:
+                if attempt < self.config.max_retries - 1:
+                    time.sleep((attempt + 1) * 2)
+                    continue
+                else:
+                    return _empty
+
+        return _empty
+
+    def get_complex_article_list_fin(
+        self,
+        complex_no: str,
+        trade_types: Optional[list] = None,
+        last_info: Optional[list] = None,
+        pyeong_types: Optional[list] = None,
+        dong_numbers: Optional[list] = None,
+        size: int = 30
+    ) -> Dict:
+        """
+        fin.land.naver.com POST API로 단지별 매물 목록 조회
+        (m.land.naver.com/cluster/ajax/articleList 대체)
+
+        Args:
+            complex_no: 단지 번호
+            trade_types: 거래 유형 목록 (예: ["A1"], ["A1","B1"])
+            last_info: 페이지네이션 커서 (이전 응답의 lastInfo 값)
+            pyeong_types: 평형 번호 목록 (빈 배열이면 전체)
+            dong_numbers: 동 번호 목록 (빈 배열이면 전체)
+            size: 페이지당 매물 수 (최대 30)
+
+        Returns:
+            {"isSuccess": bool, "result": {"list": [...], "hasNextPage": bool, "totalCount": int, "lastInfo": [...]}}
+        """
+        url = "https://fin.land.naver.com/front-api/v1/complex/article/list"
+        _empty = {"isSuccess": False, "result": {"list": [], "hasNextPage": False, "totalCount": 0, "lastInfo": []}}
+
+        body = {
+            "size": size,
+            "complexNumber": str(complex_no),
+            "tradeTypes": trade_types or ["A1"],
+            "pyeongTypes": pyeong_types or [],
+            "dongNumbers": dong_numbers or [],
+            "userChannelType": "PC",
+            "articleSortType": "RANKING_DESC",
+            "lastInfo": last_info or []
+        }
+
+        fin_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://fin.land.naver.com/",
+            "Origin": "https://fin.land.naver.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        }
+
+        self._ensure_fin_session()
+        self._wait_if_needed()
+
+        for attempt in range(self.config.max_retries):
+            try:
+                response = self.session.post(
+                    url,
+                    json=body,
+                    headers=fin_headers,
+                    timeout=self.config.timeout
+                )
+                if response.status_code == 429:
+                    # rate limit — IP 차단 상태에서 재시도는 의미 없음, 즉시 반환
+                    return _empty
+                response.raise_for_status()
+                result = response.json()
+                if result is None:
+                    return _empty
+                return result
+            except requests.exceptions.RequestException as e:
+                if attempt < self.config.max_retries - 1:
+                    time.sleep((attempt + 1) * 2)
+                    continue
+                else:
+                    return _empty
+
+        return _empty
+
     def get_articles_by_complex(
         self,
         complex_no: str,
