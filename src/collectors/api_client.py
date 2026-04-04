@@ -1,7 +1,7 @@
 """
 네이버 부동산 API 클라이언트
 """
-import requests
+from curl_cffi import requests  # Chrome TLS fingerprint 필요 (Naver 봇 차단 우회)
 import time
 from typing import Dict, Optional
 from dataclasses import dataclass
@@ -10,8 +10,8 @@ from dataclasses import dataclass
 @dataclass
 class ApiConfig:
     """API 설정"""
-    base_url: str = "https://m.land.naver.com"
-    min_delay: float = 1.0  # API 호출 간 최소 딜레이 (초)
+    base_url: str = "https://fin.land.naver.com"
+    min_delay: float = 0.1  # API 호출 간 최소 딜레이 (초)
     timeout: int = 10  # 타임아웃 (초)
     max_retries: int = 3  # 최대 재시도 횟수
 
@@ -21,14 +21,16 @@ class NaverLandApiClient:
     
     def __init__(self, config: Optional[ApiConfig] = None):
         self.config = config or ApiConfig()
-        self.session = requests.Session()
+        self.session = requests.Session(impersonate="chrome131")
         self.last_request_time = 0
-        
+
         # 기본 헤더 설정
         self.session.headers.update({
-            "Accept": "application/json",
-            "Referer": "https://m.land.naver.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://fin.land.naver.com/",
+            "Origin": "https://fin.land.naver.com",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         })
     
     def _wait_if_needed(self):
@@ -109,7 +111,7 @@ class NaverLandApiClient:
                 )
                 response.raise_for_status()
                 return response.json()
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     wait_time = (attempt + 1) * 2  # 지수 백오프
                     time.sleep(wait_time)
@@ -120,12 +122,11 @@ class NaverLandApiClient:
         raise Exception("API 호출 실패: 최대 재시도 횟수 초과")
     
     def _ensure_fin_session(self):
-        """fin.land.naver.com 세션 쿠키 초기화 (NNB 등)"""
+        """fin.land.naver.com 세션 쿠키 초기화 (PROP_TEST_ID 등)"""
         if not getattr(self, '_fin_session_initialized', False):
             try:
                 self.session.get(
                     "https://fin.land.naver.com/",
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"},
                     timeout=self.config.timeout,
                     allow_redirects=True
                 )
@@ -197,26 +198,18 @@ class NaverLandApiClient:
             "userChannelType": "PC"
         }
 
-        fin_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://fin.land.naver.com/",
-            "Origin": "https://fin.land.naver.com",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-        }
-
         self._ensure_fin_session()
         self._wait_if_needed()
 
         for attempt in range(self.config.max_retries):
             try:
-                response = self.session.post(url, json=body, headers=fin_headers, timeout=self.config.timeout)
+                response = self.session.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=self.config.timeout)
                 if response.status_code == 429:
                     return _empty
                 response.raise_for_status()
                 result = response.json()
                 return result if result is not None else _empty
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     time.sleep((attempt + 1) * 2)
                     continue
@@ -263,14 +256,6 @@ class NaverLandApiClient:
             "lastInfo": last_info or []
         }
 
-        fin_headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://fin.land.naver.com/",
-            "Origin": "https://fin.land.naver.com",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-        }
-
         self._ensure_fin_session()
         self._wait_if_needed()
 
@@ -279,7 +264,7 @@ class NaverLandApiClient:
                 response = self.session.post(
                     url,
                     json=body,
-                    headers=fin_headers,
+                    headers={"Content-Type": "application/json"},
                     timeout=self.config.timeout
                 )
                 if response.status_code == 429:
@@ -290,7 +275,7 @@ class NaverLandApiClient:
                 if result is None:
                     return _empty
                 return result
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     time.sleep((attempt + 1) * 2)
                     continue
@@ -354,7 +339,7 @@ class NaverLandApiClient:
                     return {"data": {"articleList": []}}
                 response.raise_for_status()
                 return response.json()
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     wait_time = (attempt + 1) * 2
                     time.sleep(wait_time)
@@ -436,7 +421,7 @@ class NaverLandApiClient:
                 )
                 response.raise_for_status()
                 return response.json()
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     wait_time = (attempt + 1) * 2  # 지수 백오프
                     time.sleep(wait_time)
@@ -549,7 +534,7 @@ class NaverLandApiClient:
                 )
                 response.raise_for_status()
                 return response.json()
-            except requests.exceptions.RequestException as e:
+            except Exception as e:
                 if attempt < self.config.max_retries - 1:
                     wait_time = (attempt + 1) * 2
                     time.sleep(wait_time)

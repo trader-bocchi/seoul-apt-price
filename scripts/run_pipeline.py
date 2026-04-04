@@ -93,10 +93,13 @@ def main():
     if any(v is not None for v in [dprc_min, dprc_max, spc_min, spc_max]):
         trad_tp_cd = "A1"
 
-    # 2. 수집
+    # 2. 수집 + 지역별 즉시 raw 저장
     logger.info(f"수집 대상 지역 {len(region_names)}개: {', '.join(region_names)}")
-    collector = RegionCollector(ApiConfig(min_delay=1.0, timeout=10, max_retries=3))
+    collector = RegionCollector(ApiConfig(timeout=10, max_retries=3))
     all_properties = []
+
+    raw_base = project_root / "data" / "raw"
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     for region_name in region_names:
         try:
@@ -111,6 +114,13 @@ def main():
             )
             all_properties.extend(props)
             logger.info(f"[{region_name}] {len(props)}개 수집")
+
+            # 행정구역 폴더에 즉시 저장
+            region_dir = raw_base / region_name
+            region_dir.mkdir(parents=True, exist_ok=True)
+            region_path = region_dir / f"properties_{date_str}.csv"
+            properties_to_dataframe(props).to_csv(region_path, index=False, encoding="utf-8-sig")
+            logger.info(f"  → 저장: {region_path}")
         except Exception as e:
             logger.warning(f"[{region_name}] 수집 실패: {e}")
 
@@ -118,19 +128,11 @@ def main():
         logger.error("수집된 매물이 없습니다.")
         sys.exit(1)
 
-    # 3. 인메모리 DataFrame + 중복 제거 (지역 경계 겹침으로 인한 중복 방지)
+    # 3. 전체 합산 DataFrame + 중복 제거
     combined_df = properties_to_dataframe(all_properties)
     before = len(combined_df)
     combined_df = combined_df.drop_duplicates(subset=["매물번호"])
     logger.info(f"총 {len(combined_df)}개 매물 (중복 {before - len(combined_df)}개 제거)")
-
-    # raw 데이터 저장
-    raw_dir = project_root / "data" / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_path = raw_dir / f"properties_{date_str}.csv"
-    combined_df.to_csv(raw_path, index=False, encoding="utf-8-sig")
-    logger.info(f"raw 데이터 저장: {raw_path}")
 
     # 4. 단지별 필터링 & 분석
     all_analyses = {}
