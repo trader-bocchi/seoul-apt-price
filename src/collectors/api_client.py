@@ -544,6 +544,44 @@ class NaverLandApiClient:
         
         raise Exception("지역별 매물 목록 조회 API 호출 실패: 최대 재시도 횟수 초과")
     
+    def get_article_basic_info(
+        self,
+        article_number: str,
+        real_estate_type: str = "A01",
+        trade_type: str = "A1",
+    ) -> Optional[str]:
+        """
+        개별 매물 basicInfo에서 articleFeatureDescription 반환.
+        실패 시 None 반환.
+        """
+        url = "https://fin.land.naver.com/front-api/v1/article/basicInfo"
+        params = {
+            "articleNumber": str(article_number),
+            "realEstateType": real_estate_type,
+            "tradeType": trade_type,
+        }
+        self._ensure_fin_session()
+        self._wait_if_needed()
+        for attempt in range(self.config.max_retries):
+            try:
+                response = self.session.get(url, params=params, timeout=self.config.timeout)
+                if response.status_code == 429:
+                    return None
+                response.raise_for_status()
+                data = response.json()
+                return (
+                    data.get("result", {})
+                    .get("detailInfo", {})
+                    .get("articleDetailInfo", {})
+                    .get("articleFeatureDescription", "")
+                ) or ""
+            except Exception:
+                if attempt < self.config.max_retries - 1:
+                    time.sleep((attempt + 1) * 1)
+                    continue
+                return None
+        return None
+
     def search_region_info(
         self,
         region_name: str,

@@ -10,6 +10,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# 특이 매물 탐지 키워드 (매물특징설명 내 포함 여부로 판단)
+_SPECIAL_KEYWORDS = [
+    "올수리", "전수리", "리모델링", "풀옵션", "인테리어",
+    "테라스", "복층", "급매", "급처", "역세권",
+]
+
 
 class ComplexAnalyzer:
     """단지별 매물 분석기"""
@@ -379,10 +385,17 @@ class ComplexAnalyzer:
                     
                     area_result['feature_analysis'] = feature_summary
             
+            # 특이 매물 분석
+            if '매물특징설명' in area_group.columns:
+                special = self._analyze_special_listings(area_group)
+                if special.get("keyword_groups"):
+                    area_result['special_listings'] = special
+
             if area_result:
                 result[area_key] = area_result
-        
+
         return result if result else {"error": "분석 데이터 없음"}
+
     
     def _analyze_floors(self, df: pd.DataFrame) -> Dict[str, Any]:
         """층수 분석"""
@@ -563,4 +576,45 @@ class ComplexAnalyzer:
                 continue
         
         return high_count / total if total > 0 else 0
+
+    def _analyze_special_listings(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        매물특징설명 키워드 기반 특이 매물 탐지.
+        df는 가격_억, 매물특징설명, 층수정보, 방향 컬럼을 포함하는 area_group.
+        """
+        if '매물특징설명' not in df.columns or '가격_억' not in df.columns:
+            return {}
+
+        base = df[['가격_억', '층수정보', '방향', '매물특징설명']].copy()
+        base['매물특징설명'] = base['매물특징설명'].fillna('')
+        base = base.dropna(subset=['가격_억'])
+        if base.empty:
+            return {}
+
+        overall_median = float(base['가격_억'].median())
+        keyword_groups: Dict[str, Any] = {}
+
+        for kw in _SPECIAL_KEYWORDS:
+            matched = base[base['매물특징설명'].str.contains(kw, na=False)]
+            if matched.empty:
+                continue
+            avg = float(matched['가격_억'].mean())
+            keyword_groups[kw] = {
+                "count": len(matched),
+                "avg_price": avg,
+                "premium": avg - overall_median,
+                "listings": [
+                    {
+                        "price": float(r["가격_억"]),
+                        "floor": str(r.get("층수정보", "")),
+                        "direction": str(r.get("방향", "")),
+                    }
+                    for _, r in matched.iterrows()
+                ],
+            }
+
+        return {
+            "median_price": overall_median,
+            "keyword_groups": keyword_groups,
+        }
 

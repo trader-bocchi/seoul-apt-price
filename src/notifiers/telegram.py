@@ -311,6 +311,29 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
             if hi_dong and lo_dong and gap and not (isinstance(gap, float) and pd.isna(gap)):
                 msg += f"  <b>동별</b>  최고 {hi_dong}  최저 {lo_dong}  차이 {gap:.1f}억\n"
 
+        # 특이 매물 (매물특징설명 키워드 기반)
+        special = area_data.get("special_listings", {})
+        kw_groups = special.get("keyword_groups", {})
+        if kw_groups:
+            median_p = special.get("median_price", 0)
+            rows = []
+            for kw, s in kw_groups.items():
+                sign = "+" if s["premium"] >= 0 else ""
+                rows.append(
+                    f"  [{kw}] {s['count']}건  평균 {s['avg_price']:.1f}억"
+                    f"  ({sign}{s['premium']:.1f}억 vs 중앙 {median_p:.1f}억)"
+                )
+                for listing in s.get("listings", [])[:3]:
+                    dev = listing["price"] - median_p
+                    sign2 = "+" if dev >= 0 else ""
+                    floor = listing.get("floor", "")
+                    direction = listing.get("direction", "")
+                    rows.append(
+                        f"    {listing['price']:.1f}억  {floor}층  {direction}"
+                        f"  ({sign2}{dev:.1f}억)"
+                    )
+            msg += "  <b>특이 매물</b>\n<pre>" + "\n".join(rows) + "</pre>\n"
+
         msg += "\n"
 
     return msg

@@ -128,6 +128,28 @@ def main():
         logger.error("수집된 매물이 없습니다.")
         sys.exit(1)
 
+    # 2.5. my_home 단지 매물 특징 설명 보강 (basicInfo API)
+    if my_home:
+        my_home_props = [p for p in all_properties if my_home.lower() in p.complex_name.lower()]
+        if my_home_props:
+            logger.info(f"[{my_home}] 특징 설명 보강 중... ({len(my_home_props)}건)")
+            enriched = 0
+            for p in my_home_props:
+                desc = collector.api_client.get_article_basic_info(
+                    p.item_id, trade_type=p.trade_type_code
+                )
+                if desc:
+                    p.atcl_fetr_desc = desc
+                    enriched += 1
+            logger.info(f"[{my_home}] 특징 설명 {enriched}건 보강 완료")
+
+            # my_home 지역 CSV 덮어쓰기 (특징 설명 포함)
+            my_home_region = my_home_props[0].region_name
+            region_props = [p for p in all_properties if p.region_name == my_home_region]
+            region_path = raw_base / my_home_region / f"properties_{date_str}.csv"
+            properties_to_dataframe(region_props).to_csv(region_path, index=False, encoding="utf-8-sig")
+            logger.info(f"  → 특징 설명 반영 재저장: {region_path}")
+
     # 3. 전체 합산 DataFrame + 중복 제거
     combined_df = properties_to_dataframe(all_properties)
     before = len(combined_df)
