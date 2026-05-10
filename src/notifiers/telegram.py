@@ -140,6 +140,16 @@ class TelegramNotifier:
             })
         return success
 
+    def send_migration_report(self, report: Dict) -> bool:
+        """이사 비교 레포트 전송 (스냅샷 메시지 + 추세 메시지)"""
+        msg1 = _format_migration_snapshot(report)
+        ok1 = self.send_message(msg1)
+
+        msg2 = _format_migration_trend(report)
+        ok2 = self.send_message(msg2) if msg2 else True
+
+        return ok1 and ok2
+
     def send_all_comparisons(self, my_data: Dict, all_target_data: Dict[str, Dict]) -> bool:
         now = datetime.now()
         header = (
@@ -255,12 +265,25 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
     if not sorted_areas:
         return msg + "⚠️ 평형 데이터 없음\n"
 
+    lease_by_area = data.get("lease_distribution_by_area", {}).get("by_area", {})
+
     for area_key in sorted_areas[:5]:
         area_data = detailed[area_key]
-        cnt = by_area.get(area_key, {}).get("count", 0)
-        cnt_str = f"  <i>{cnt}건</i>" if cnt else ""
+        sale_cnt = by_area.get(area_key, {}).get("count", 0)
+        sale_med = by_area.get(area_key, {}).get("median")
+        lease_info = lease_by_area.get(area_key, {})
+        lease_cnt = lease_info.get("count", 0)
+        lease_med = lease_info.get("median")
 
-        msg += f"<b>▪ {area_key}㎡</b>{cnt_str}\n"
+        # 헤더: 평형 + 매매/전세 중위 요약
+        header_parts = [f"<b>▪ {area_key}㎡</b>"]
+        if sale_med is not None:
+            header_parts.append(f"매매 {sale_med:.1f}억({sale_cnt}건)")
+        if lease_med is not None:
+            gap = round(sale_med - lease_med, 2) if sale_med is not None else None
+            gap_str = f"  갭 {gap:.1f}억" if gap is not None else ""
+            header_parts.append(f"전세 {lease_med:.1f}억({lease_cnt}건){gap_str}")
+        msg += "  ".join(header_parts) + "\n"
 
         # 층별
         floor_analysis = area_data.get("floor_analysis", {})
@@ -370,6 +393,171 @@ def _format_drop_alert_message(complex_name: str, data: Dict) -> str:
             arrow = "⬇️" if delta < 0 else "⬆️"
             msg += f"  {label}  {delta:+.1f}억 ({pct:+.1f}%)  {arrow}\n"
     return msg
+
+
+def _fmt_price(val: Optional[float], suffix: str = "억") -> str:
+    """None이면 '-', 아니면 소수점 1자리 + suffix"""
+    if val is None:
+        return "-"
+    return f"{val:.1f}{suffix}"
+
+
+def _fmt_pyeong(val: Optional[int]) -> str:
+    if val is None:
+        return "-"
+    return f"{val:,}만"
+
+
+def _format_migration_snapshot(report: Dict) -> str:
+    """
+    메시지 1: 이사 비교 분석 — 단지별 블록 형식
+
+    🏠 내 단지: 산들마을  전용 51㎡
+    매매 9.3억 | 평당 5,920만 | 전세 6.8억 | 갭 2.5억
+
+    🏢 산성역포레스티아
+      59㎡  매매 14.5억 | 평당 8,010만 | 전세 7.2억 | 갭 7.3억
+      84㎡  매매 16.0억 | 평당 6,229만 | 전세 8.5억 | 갭 7.5억
+    ...
+    """
+    now = datetime.now()
+    my = report["my_home"]
+    targets = report["targets"]
+
+    my_stats = my.get("stats") or {}
+    my_sale = _fmt_price(my_stats.get("sale_median"))
+    my_pyeong = _fmt_pyeong(my_stats.get("price_per_pyeong"))
+    my_lease = _fmt_price(my_stats.get("lease_median"))
+    my_gap = _fmt_price(my_stats.get("lease_gap"))
+
+    msg = (
+        f"🔄 <b>이사 비교 분석</b>\n"
+        f"<i>{now.strftime(f'%Y-%m-%d ({_WEEKDAY_KR[now.weekday()]}) %H:%M')}</i>\n"
+        f"{'─' * 24}\n\n"
+        f"🏠 <b>내 단지: {my['name']}</b>  전용 {my['area']}㎡\n"
+        f"  매매 {my_sale} | 평당 {my_pyeong} | 전세 {my_lease} | 갭 {my_gap}\n"
+    )
+
+    if not targets:
+        return msg + "\n비교 데이터 없음\n"
+
+    sub_notes: List[str] = []
+
+    for t in targets:
+        name = t["name"]
+        area_matched = t["area_matched"]
+        snapshots = t["snapshots"]
+
+        msg += f"\n🏢 <b>{name}</b>\n"
+
+        for t_area in [59, 84]:
+            if t_area not in area_matched:
+                continue
+            actual = area_matched[t_area]
+            stats = snapshots.get(t_area) or {}
+
+            area_label = f"{actual}㎡"
+            note = ""
+            if actual != t_area:
+                note = f"*"
+                sub_notes.append(f"*{name} {t_area}→{actual}㎡")
+
+            sale = _fmt_price(stats.get("sale_median"))
+            pyeong = _fmt_pyeong(stats.get("price_per_pyeong"))
+            lease = _fmt_price(stats.get("lease_median"))
+            gap = _fmt_price(stats.get("lease_gap"))
+
+            msg += (
+                f"  {area_label}{note}  "
+                f"매매 {sale} | 평당 {pyeong} | 전세 {lease} | 갭 {gap}\n"
+            )
+
+    if sub_notes:
+        msg += "\n<i>" + "  ".join(sub_notes) + " (인근 평형 대체)</i>\n"
+
+    return msg
+
+
+def _format_migration_trend(report: Dict) -> str:
+    """
+    메시지 2: 매매 중위 추세 (억)
+
+    📈 매매 중위 추세 (억)
+    <pre>
+                  현재   1M전   3M전   6M전   1Y전
+    내단지 51㎡   10.5   10.2      -      -      -
+    원베일리 59㎡ 23.0   22.5   22.0      -      -
+    ...
+    </pre>
+    데이터 없는 구간은 열 자체를 숨김.
+    """
+    my = report["my_home"]
+    targets = report["targets"]
+
+    # 어떤 기간 컬럼이 실제로 존재하는지 파악
+    all_period_labels = [label for label, *_ in [("1M",), ("3M",), ("6M",), ("1Y",)]]
+    # 실제 순서 유지
+    period_order = ["1M", "3M", "6M", "1Y"]
+
+    used_periods: set = set()
+    # 내 단지 trend
+    my_trend = my.get("trend", {})
+    used_periods.update(k for k, v in my_trend.items() if v is not None)
+    # 타겟 trend
+    for t in targets:
+        for period_label, area_vals in t.get("trend", {}).items():
+            if any(v is not None for v in area_vals.values()):
+                used_periods.add(period_label)
+
+    active_periods = [p for p in period_order if p in used_periods]
+
+    if not active_periods and not my_trend:
+        return ""  # 시계열 데이터 없으면 메시지 미전송
+
+    # 헤더 행
+    period_headers = "  ".join(f"{p:>6}" for p in active_periods)
+    header = f"{'':16}  {'현재':>6}  {period_headers}"
+
+    rows: List[str] = []
+
+    # 내 단지 행
+    my_current = my.get("stats", {}) or {}
+    my_current_val = _fmt_price(my_current.get("sale_median"), "")
+    my_period_vals = "  ".join(
+        f"{_fmt_price(my_trend.get(p), ''):>6}" for p in active_periods
+    )
+    my_label = f"{my['name'][:6]} {my['area']}㎡"
+    rows.append(f"{my_label:<16}  {my_current_val:>6}  {my_period_vals}")
+
+    # 타겟 단지 행
+    for t in targets:
+        name_short = t["name"][:6]
+        trend = t.get("trend", {})
+        snapshots = t.get("snapshots", {})
+        area_matched = t.get("area_matched", {})
+
+        for t_area in [59, 84]:
+            if t_area not in area_matched:
+                continue
+            actual = area_matched[t_area]
+            current_stats = snapshots.get(t_area) or {}
+            current_val = _fmt_price(current_stats.get("sale_median"), "")
+
+            period_vals = "  ".join(
+                f"{_fmt_price((trend.get(p) or {}).get(t_area), ''):>6}"
+                for p in active_periods
+            )
+            label = f"{name_short} {actual}㎡"
+            rows.append(f"{label:<16}  {current_val:>6}  {period_vals}")
+
+    table = header + "\n" + "\n".join(rows)
+    now = datetime.now()
+    return (
+        f"📈 <b>매매 중위 추세</b> (억)\n"
+        f"<i>{now.strftime(f'%Y-%m-%d ({_WEEKDAY_KR[now.weekday()]}) %H:%M')}</i>\n"
+        f"{'─' * 24}\n"
+        f"<pre>{table}</pre>\n"
+    )
 
 
 def _format_comparison_message(

@@ -17,6 +17,7 @@ from src.collectors.region_collector import RegionCollector
 from src.collectors.api_client import ApiConfig
 from src.config.env_loader import EnvConfig
 from src.analyzers.complex_analyzer import ComplexAnalyzer
+from src.analyzers.migration_analyzer import build_migration_report
 from src.notifiers.telegram import TelegramNotifier
 from src.storage.csv_store import CSVStore
 
@@ -89,9 +90,7 @@ def main():
     spc_min = EnvConfig.get_area_filter_min()
     spc_max = EnvConfig.get_area_filter_max()
 
-    trad_tp_cd = "A1:B1:B2:B3"
-    if any(v is not None for v in [dprc_min, dprc_max, spc_min, spc_max]):
-        trad_tp_cd = "A1"
+    has_filters = any(v is not None for v in [dprc_min, dprc_max, spc_min, spc_max])
 
     # 2. 수집 + 지역별 즉시 raw 저장
     logger.info(f"수집 대상 지역 {len(region_names)}개: {', '.join(region_names)}")
@@ -103,15 +102,34 @@ def main():
 
     for region_name in region_names:
         try:
-            props, _ = collector.collect_properties_by_region(
-                region_name=region_name,
-                rlet_tp_cd="APT:JGC",
-                trad_tp_cd=trad_tp_cd,
-                dprc_min=dprc_min,
-                dprc_max=dprc_max,
-                spc_min=spc_min,
-                spc_max=spc_max,
-            )
+            if has_filters:
+                # 매매: 가격+면적 필터 모두 적용
+                sale_props, _ = collector.collect_properties_by_region(
+                    region_name=region_name,
+                    rlet_tp_cd="APT:JGC",
+                    trad_tp_cd="A1",
+                    dprc_min=dprc_min,
+                    dprc_max=dprc_max,
+                    spc_min=spc_min,
+                    spc_max=spc_max,
+                )
+                # 전세: 면적 필터만 적용 (전세가와 매매가 범위가 다름)
+                lease_props, _ = collector.collect_properties_by_region(
+                    region_name=region_name,
+                    rlet_tp_cd="APT:JGC",
+                    trad_tp_cd="B1",
+                    dprc_min=None,
+                    dprc_max=None,
+                    spc_min=spc_min,
+                    spc_max=spc_max,
+                )
+                props = sale_props + lease_props
+            else:
+                props, _ = collector.collect_properties_by_region(
+                    region_name=region_name,
+                    rlet_tp_cd="APT:JGC",
+                    trad_tp_cd="A1:B1",
+                )
             all_properties.extend(props)
             logger.info(f"[{region_name}] {len(props)}개 수집")
 
@@ -183,15 +201,34 @@ def main():
         logger.error("분석 결과가 없습니다.")
         sys.exit(1)
 
-    # 5. 텔레그램 전송
+    # 5. 텔레그램 전송 (순서: 내 단지 상세 → 호가 리포트 → 이사 비교 → 추세)
     logger.info("텔레그램 리포트 전송 중...")
 
-    if not notifier.send_all_complexes_analysis(all_analyses):
-        logger.error("단지 분석 리포트 전송 실패")
-
+    # 5-1. 내 단지 상세분석
     if my_analysis:
         if not notifier.send_my_home_detailed_analysis(my_home, my_analysis):
             logger.error("내 단지 상세분석 리포트 전송 실패")
+
+    # 5-2. 호가 리포트 (전 단지)
+    if not notifier.send_all_complexes_analysis(all_analyses):
+        logger.error("단지 분석 리포트 전송 실패")
+
+    # 5-3. 이사 비교 레포트 (스냅샷 + 추세)
+    if my_home and target_homes:
+        my_home_area = EnvConfig.get_my_home_area()
+        if my_home_area is None:
+            logger.warning("MY_HOME_AREA 미설정 — 이사 비교 레포트 건너뜀")
+        else:
+            logger.info("이사 비교 레포트 전송 중...")
+            migration_report = build_migration_report(
+                combined_df,
+                my_home,
+                target_homes,
+                raw_base,
+                my_home_area,
+            )
+            if not notifier.send_migration_report(migration_report):
+                logger.error("이사 비교 레포트 전송 실패")
 
     logger.info("완료")
 

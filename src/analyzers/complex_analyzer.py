@@ -97,26 +97,32 @@ class ComplexAnalyzer:
                 "total_count": 0,
                 "error": "데이터 없음"
             }
-        
-        # 가격 정보 (만원 단위로 변환)
-        prices = df['가격'].astype(float) / 10000  # 억 단위
-        
-        # 평형별 분석 (평형대별 가격 분포 포함)
-        area_analysis = self._analyze_by_area(df)
-        
-        # 평형대별 가격 분포 계산
-        price_distribution_by_area = self._calculate_price_distribution_by_area(df, area_analysis)
-        
-        # 동별 가격 차이
-        dong_price_diff = self._analyze_dong_price_difference(df)
-        
-        # 층/동/향별 상세 분석
-        detailed_analysis = self._analyze_detailed_factors(df)
-        
+
+        # 매매(A1)만 가격 분석에 사용, 전세(B1)는 별도 계산
+        sale_df = df[df["거래유형코드"] == "A1"] if "거래유형코드" in df.columns else df
+        if sale_df.empty:
+            sale_df = df  # 거래유형 구분 불가 시 전체 사용
+
+        # 평형별 분석 (평형대별 가격 분포 포함) — 매매 기준
+        area_analysis = self._analyze_by_area(sale_df)
+
+        # 평형대별 가격 분포 계산 — 매매 기준
+        price_distribution_by_area = self._calculate_price_distribution_by_area(sale_df, area_analysis)
+
+        # 동별 가격 차이 — 매매 기준
+        dong_price_diff = self._analyze_dong_price_difference(sale_df)
+
+        # 층/동/향별 상세 분석 — 매매 기준
+        detailed_analysis = self._analyze_detailed_factors(sale_df)
+
+        # 전세 통계 — 원본 df(B1 필터는 내부에서 처리)
+        lease_distribution_by_area = self._calculate_lease_distribution_by_area(df)
+
         return {
             "complex_name": self.complex_name,
-            "total_count": len(df),
+            "total_count": len(sale_df),  # 매매 건수 기준
             "price_distribution_by_area": price_distribution_by_area,  # 평형대별 가격 분포
+            "lease_distribution_by_area": lease_distribution_by_area,  # 전세 평형대별 분포
             "area_analysis": area_analysis,  # 평형별 분석
             "dong_price_diff": dong_price_diff,
             "detailed_analysis": detailed_analysis  # 층/동/향별 상세 분석
@@ -237,6 +243,45 @@ class ComplexAnalyzer:
             "overall": overall
         }
     
+    def _calculate_lease_distribution_by_area(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        전세(B1) 평형대별 가격 분포 계산.
+
+        Returns:
+            {
+                "by_area": {area_int: {"count": int, "median": float, "min": float, "max": float}},
+                "available": bool
+            }
+        """
+        if "거래유형코드" not in df.columns or "전용면적제곱미터" not in df.columns:
+            return {"by_area": {}, "available": False}
+
+        lease_df = df[df["거래유형코드"] == "B1"].copy()
+        if lease_df.empty:
+            return {"by_area": {}, "available": False}
+
+        lease_df["전용면적제곱미터"] = pd.to_numeric(lease_df["전용면적제곱미터"], errors="coerce")
+        lease_df["가격_억"] = lease_df["가격"].astype(float) / 10000
+        lease_df = lease_df.dropna(subset=["전용면적제곱미터", "가격_억"])
+        import math
+        lease_df["면적대"] = lease_df["전용면적제곱미터"].apply(
+            lambda x: math.floor(float(x)) if pd.notna(x) else None
+        )
+
+        by_area: Dict[int, Any] = {}
+        for area_key, group in lease_df.groupby("면적대"):
+            if pd.isna(area_key):
+                continue
+            prices = group["가격_억"]
+            by_area[int(area_key)] = {
+                "count": len(prices),
+                "median": float(prices.median()),
+                "min": float(prices.min()),
+                "max": float(prices.max()),
+            }
+
+        return {"by_area": by_area, "available": bool(by_area)}
+
     def _analyze_detailed_factors(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         층/동/향별 호가 차이 상세 분석 (평형대별로 구분)

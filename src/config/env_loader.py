@@ -319,7 +319,7 @@ class EnvConfig:
         Returns:
             면적 (m²) 또는 None
         """
-        area_str = os.getenv("MY_HOME_AREA")
+        area_str = os.getenv("MY_HOME_AREA") or os.getenv("MY_HOME_COMPLEX_AREA")
         if area_str:
             try:
                 return float(area_str)
