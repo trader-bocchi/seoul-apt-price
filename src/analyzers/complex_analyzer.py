@@ -345,7 +345,7 @@ class ComplexAnalyzer:
                         labels=['저층(1-5층)', '중층(6-10층)', '고층(11-15층)', '초고층(16층+)']
                     )
                     
-                    floor_stats = floor_df.groupby('floor_category')['price'].agg(['mean', 'count', 'min', 'max']).to_dict('index')
+                    floor_stats = floor_df.groupby('floor_category', observed=True)['price'].agg(['mean', 'count', 'min', 'max']).to_dict('index')
                     area_result['floor_analysis'] = {
                         k: {
                             'avg_price': float(v['mean']),
