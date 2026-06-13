@@ -10,6 +10,9 @@ from src.storage.csv_store import CSVStore
 import math
 import os
 import csv
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class RegionCollector:
@@ -942,7 +945,8 @@ class RegionCollector:
                     last_info_cursor = result.get("lastInfo", [])
                     if not last_info_cursor:
                         break
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[{region_name}] 단지 {complex_no} 페이지 수집 중단 (수집 누락 가능): {e}")
                     break
         
         # 5단계: 중복 제거

@@ -2,7 +2,6 @@
 단지별 매물 분석 모듈
 """
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pathlib import Path
@@ -442,107 +441,6 @@ class ComplexAnalyzer:
         return result if result else {"error": "분석 데이터 없음"}
 
     
-    def _analyze_floors(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """층수 분석"""
-        if '층수정보' not in df.columns:
-            return {"error": "층수 정보 없음"}
-        
-        floors = []
-        for floor_str in df['층수정보'].dropna():
-            try:
-                # "22/29" 형식 파싱
-                if '/' in str(floor_str):
-                    current, total = str(floor_str).split('/')
-                    floors.append({
-                        "current": int(current),
-                        "total": int(total),
-                        "ratio": int(current) / int(total) if int(total) > 0 else 0
-                    })
-            except:
-                continue
-        
-        if not floors:
-            return {"error": "층수 파싱 실패"}
-        
-        floor_currents = [f["current"] for f in floors]
-        floor_totals = [f["total"] for f in floors]
-        floor_ratios = [f["ratio"] for f in floors]
-        
-        # 로얄층 판단 (상위 20%)
-        royal_threshold = np.percentile(floor_ratios, 80)
-        royal_floors = [f for f in floors if f["ratio"] >= royal_threshold]
-        
-        return {
-            "avg_floor": np.mean(floor_currents),
-            "min_floor": np.min(floor_currents),
-            "max_floor": np.max(floor_currents),
-            "avg_total_floors": np.mean(floor_totals),
-            "royal_floor_count": len(royal_floors),
-            "royal_floor_ratio": len(royal_floors) / len(floors) if floors else 0,
-            "floor_distribution": {
-                "low": len([f for f in floor_currents if f <= 10]),
-                "mid": len([f for f in floor_currents if 10 < f <= 20]),
-                "high": len([f for f in floor_currents if f > 20])
-            }
-        }
-    
-    def _analyze_directions(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """향 분석"""
-        if '방향' not in df.columns:
-            return {"error": "향 정보 없음"}
-        
-        directions = df['방향'].dropna().tolist()
-        if not directions:
-            return {"error": "향 데이터 없음"}
-        
-        direction_counts = pd.Series(directions).value_counts()
-        
-        return {
-            "most_common": direction_counts.index[0] if len(direction_counts) > 0 else "N/A",
-            "distribution": direction_counts.to_dict(),
-            "total_varieties": len(direction_counts)
-        }
-    
-    def _analyze_price_distribution(self, prices: pd.Series) -> Dict[str, Any]:
-        """가격 분포 분석"""
-        return {
-            "min": float(prices.min()),
-            "max": float(prices.max()),
-            "median": float(prices.median()),
-            "mean": float(prices.mean()),
-            "std": float(prices.std()),
-            "q25": float(prices.quantile(0.25)),
-            "q75": float(prices.quantile(0.75)),
-            "price_ranges": {
-                "under_10": len(prices[prices < 10]),
-                "10_15": len(prices[(prices >= 10) & (prices < 15)]),
-                "15_20": len(prices[(prices >= 15) & (prices < 20)]),
-                "over_20": len(prices[prices >= 20])
-            }
-        }
-    
-    def _calculate_statistics(self, prices: pd.Series, df: pd.DataFrame) -> Dict[str, Any]:
-        """통계값 계산"""
-        stats = {
-            "count": len(prices),
-            "min_price": float(prices.min()),
-            "max_price": float(prices.max()),
-            "median_price": float(prices.median()),
-            "mean_price": float(prices.mean()),
-            "std_price": float(prices.std())
-        }
-        
-        # 면적별 가격 (있는 경우)
-        if '전용면적제곱미터' in df.columns:
-            areas = df['전용면적제곱미터'].astype(float)
-            price_per_m2 = prices * 10000 / areas  # 만원/m²
-            stats["price_per_m2"] = {
-                "mean": float(price_per_m2.mean()),
-                "median": float(price_per_m2.median())
-            }
-        
-        return stats
-    
     def _analyze_dong_price_difference(self, df: pd.DataFrame) -> Dict[str, Any]:
         """동별 가격 차이 분석"""
         if '동명' not in df.columns or '가격' not in df.columns:
@@ -576,52 +474,6 @@ class ComplexAnalyzer:
             } for dong, stats in dong_stats.items()}
         }
     
-    def _extract_special_notes(self, df: pd.DataFrame) -> List[str]:
-        """특이사항 추출"""
-        notes = []
-        
-        # 최고가/최저가
-        if '가격' in df.columns:
-            prices = df['가격'].astype(float)
-            max_price_idx = prices.idxmax()
-            min_price_idx = prices.idxmin()
-            
-            max_price_row = df.loc[max_price_idx]
-            min_price_row = df.loc[min_price_idx]
-            
-            notes.append(f"최고가: {max_price_row.get('가격표시', 'N/A')} ({max_price_row.get('동명', 'N/A')}동, {max_price_row.get('층수정보', 'N/A')})")
-            notes.append(f"최저가: {min_price_row.get('가격표시', 'N/A')} ({min_price_row.get('동명', 'N/A')}동, {min_price_row.get('층수정보', 'N/A')})")
-        
-        # 로얄층/로얄동
-        if '층수정보' in df.columns and '동명' in df.columns:
-            # 상위층 비율이 높은 동
-            dong_floor_stats = df.groupby('동명')['층수정보'].apply(
-                lambda x: self._calculate_high_floor_ratio(x)
-            )
-            if not dong_floor_stats.empty:
-                top_dong = dong_floor_stats.idxmax()
-                notes.append(f"고층 비율 높은 동: {top_dong}")
-        
-        return notes
-    
-    def _calculate_high_floor_ratio(self, floor_series: pd.Series) -> float:
-        """고층 비율 계산"""
-        high_count = 0
-        total = 0
-        
-        for floor_str in floor_series.dropna():
-            try:
-                if '/' in str(floor_str):
-                    current, total_floors = str(floor_str).split('/')
-                    ratio = int(current) / int(total_floors) if int(total_floors) > 0 else 0
-                    if ratio >= 0.8:  # 상위 20%
-                        high_count += 1
-                    total += 1
-            except:
-                continue
-        
-        return high_count / total if total > 0 else 0
-
     def _analyze_special_listings(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         매물특징설명 키워드 기반 특이 매물 탐지.
