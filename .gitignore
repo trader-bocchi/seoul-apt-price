@@ -54,4 +54,5 @@ Thumbs.db
 # Documentation (README.md, CLAUDE.md 제외)
 *.md
 !README.md
+!CLAUDE.md
 !.claude/CLAUDE.md

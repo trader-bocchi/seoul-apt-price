@@ -1,6 +1,7 @@
 """
 텔레그램 알림 전송
 """
+import html
 import requests
 import math
 import pandas as pd
@@ -11,6 +12,11 @@ from src.storage.csv_store import CSVStore
 
 _WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
 _MAX_MSG_LEN = 4000  # Telegram 한도 4096, 버퍼 확보
+
+
+def _esc(value) -> str:
+    """parse_mode=HTML 안전: 외부 유래 텍스트(단지명·동명·향 등)의 <,>,& 이스케이프"""
+    return html.escape(str(value))
 
 
 class TelegramNotifier:
@@ -220,12 +226,13 @@ def _build_complexes_blocks(
 def _format_complex_block(complex_name: str, data: Dict, is_my_home: bool) -> str:
     """단지 하나의 포맷 블록"""
     total = data.get("total_count", 0)
+    name = _esc(complex_name)
     if total == 0:
         icon = "🏠" if is_my_home else "🎯"
-        return f"{icon} <b>{complex_name}</b>  데이터 없음\n\n"
+        return f"{icon} <b>{name}</b>  데이터 없음\n\n"
 
     icon = "🏠" if is_my_home else "🎯"
-    block = f"{icon} <b>{complex_name}</b>  <i>{total}건</i>\n"
+    block = f"{icon} <b>{name}</b>  <i>{total}건</i>\n"
 
     price_dist = data.get("price_distribution_by_area", {})
     by_area = price_dist.get("by_area", {})
@@ -249,7 +256,7 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
     """내 단지 층/향/동 상세분석 메시지"""
     msg = (
         f"🔍 <b>내 단지 상세분석</b>\n"
-        f"🏠 <b>{complex_name}</b>\n"
+        f"🏠 <b>{_esc(complex_name)}</b>\n"
         f"<i>{_now_str()}</i>\n"
         f"{'─' * 24}\n\n"
     )
@@ -315,11 +322,11 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
                 avg = s.get("avg_price", 0)
                 if not avg or (isinstance(avg, float) and pd.isna(avg)):
                     continue
-                dir_rows.append(f"  {d:<4}  {avg:.1f}억  {s.get('count', 0)}건")
+                dir_rows.append(f"  {_esc(d):<4}  {avg:.1f}억  {s.get('count', 0)}건")
             gap = dir_analysis.get("price_gap", 0)
             if gap and not (isinstance(gap, float) and pd.isna(gap)) and gap > 0:
-                hi_d = dir_analysis.get("highest_direction", "")
-                lo_d = dir_analysis.get("lowest_direction", "")
+                hi_d = _esc(dir_analysis.get("highest_direction", ""))
+                lo_d = _esc(dir_analysis.get("lowest_direction", ""))
                 dir_rows.append(f"  ↕ 향간 차이  {gap:.1f}억  ({hi_d} › {lo_d})")
             if dir_rows:
                 msg += "  <b>향별 평균</b>\n<pre>" + "\n".join(dir_rows) + "</pre>\n"
@@ -332,7 +339,7 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
             lo_dong = dong_analysis.get("lowest_dong", "")
             gap = dong_analysis.get("price_gap", 0)
             if hi_dong and lo_dong and gap and not (isinstance(gap, float) and pd.isna(gap)):
-                msg += f"  <b>동별</b>  최고 {hi_dong}  최저 {lo_dong}  차이 {gap:.1f}억\n"
+                msg += f"  <b>동별</b>  최고 {_esc(hi_dong)}  최저 {_esc(lo_dong)}  차이 {gap:.1f}억\n"
 
         # 특이 매물 (매물특징설명 키워드 기반)
         special = area_data.get("special_listings", {})
@@ -349,8 +356,8 @@ def _format_my_home_detailed(complex_name: str, data: Dict) -> str:
                 for listing in s.get("listings", [])[:3]:
                     dev = listing["price"] - median_p
                     sign2 = "+" if dev >= 0 else ""
-                    floor = listing.get("floor", "")
-                    direction = listing.get("direction", "")
+                    floor = _esc(listing.get("floor", ""))
+                    direction = _esc(listing.get("direction", ""))
                     rows.append(
                         f"    {listing['price']:.1f}억  {floor}층  {direction}"
                         f"  ({sign2}{dev:.1f}억)"
@@ -434,7 +441,7 @@ def _format_migration_snapshot(report: Dict) -> str:
         f"🔄 <b>이사 비교 분석</b>\n"
         f"<i>{now.strftime(f'%Y-%m-%d ({_WEEKDAY_KR[now.weekday()]}) %H:%M')}</i>\n"
         f"{'─' * 24}\n\n"
-        f"🏠 <b>내 단지: {my['name']}</b>  전용 {my['area']}㎡\n"
+        f"🏠 <b>내 단지: {_esc(my['name'])}</b>  전용 {my['area']}㎡\n"
         f"  매매 {my_sale} | 평당 {my_pyeong} | 전세 {my_lease} | 갭 {my_gap}\n"
     )
 
@@ -448,7 +455,7 @@ def _format_migration_snapshot(report: Dict) -> str:
         area_matched = t["area_matched"]
         snapshots = t["snapshots"]
 
-        msg += f"\n🏢 <b>{name}</b>\n"
+        msg += f"\n🏢 <b>{_esc(name)}</b>\n"
 
         for t_area in [59, 84]:
             if t_area not in area_matched:
@@ -460,7 +467,7 @@ def _format_migration_snapshot(report: Dict) -> str:
             note = ""
             if actual != t_area:
                 note = f"*"
-                sub_notes.append(f"*{name} {t_area}→{actual}㎡")
+                sub_notes.append(f"*{_esc(name)} {t_area}→{actual}㎡")
 
             sale = _fmt_price(stats.get("sale_median"))
             pyeong = _fmt_pyeong(stats.get("price_per_pyeong"))
@@ -526,12 +533,12 @@ def _format_migration_trend(report: Dict) -> str:
     my_period_vals = "  ".join(
         f"{_fmt_price(my_trend.get(p), ''):>6}" for p in active_periods
     )
-    my_label = f"{my['name'][:6]} {my['area']}㎡"
+    my_label = f"{_esc(my['name'][:6])} {my['area']}㎡"
     rows.append(f"{my_label:<16}  {my_current_val:>6}  {my_period_vals}")
 
     # 타겟 단지 행
     for t in targets:
-        name_short = t["name"][:6]
+        name_short = _esc(t["name"][:6])
         trend = t.get("trend", {})
         snapshots = t.get("snapshots", {})
         area_matched = t.get("area_matched", {})
@@ -565,8 +572,8 @@ def _format_comparison_message(
     target_data: Dict,
     my_home_area: Optional[float] = None,
 ) -> str:
-    my_name = my_data.get("complex_name", "내 집")
-    tgt_name = target_data.get("complex_name", "관심 단지")
+    my_name = _esc(my_data.get("complex_name", "내 집"))
+    tgt_name = _esc(target_data.get("complex_name", "관심 단지"))
 
     if my_home_area is None:
         my_home_area = EnvConfig.get_my_home_area()

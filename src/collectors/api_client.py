@@ -3,15 +3,18 @@
 """
 from curl_cffi import requests  # Chrome TLS fingerprint 필요 (Naver 봇 차단 우회)
 import time
+import logging
 from typing import Dict, Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ApiConfig:
     """API 설정"""
     base_url: str = "https://fin.land.naver.com"
-    min_delay: float = 0.02  # API 호출 간 최소 딜레이 (초)
+    min_delay: float = 0.2  # API 호출 간 최소 딜레이 (초) — 너무 짧으면 429 차단 위험
     timeout: int = 10  # 타임아웃 (초)
     max_retries: int = 3  # 최대 재시도 횟수
 
@@ -205,6 +208,7 @@ class NaverLandApiClient:
             try:
                 response = self.session.post(url, json=body, headers={"Content-Type": "application/json"}, timeout=self.config.timeout)
                 if response.status_code == 429:
+                    logger.warning("complexClusters 429 rate limit — 빈 결과 반환 (수집 누락 가능)")
                     return _empty
                 response.raise_for_status()
                 result = response.json()
@@ -214,6 +218,7 @@ class NaverLandApiClient:
                     time.sleep((attempt + 1) * 2)
                     continue
                 else:
+                    logger.warning(f"complexClusters 재시도 소진 — 빈 결과 반환 (수집 누락 가능): {e}")
                     return _empty
 
         return _empty
@@ -269,6 +274,7 @@ class NaverLandApiClient:
                 )
                 if response.status_code == 429:
                     # rate limit — IP 차단 상태에서 재시도는 의미 없음, 즉시 반환
+                    logger.warning(f"article/list 429 rate limit (complex={complex_no}) — 빈 결과 반환 (수집 누락 가능)")
                     return _empty
                 response.raise_for_status()
                 result = response.json()
@@ -280,76 +286,11 @@ class NaverLandApiClient:
                     time.sleep((attempt + 1) * 2)
                     continue
                 else:
+                    logger.warning(f"article/list 재시도 소진 (complex={complex_no}) — 빈 결과 반환 (수집 누락 가능): {e}")
                     return _empty
 
         return _empty
 
-    def get_articles_by_complex(
-        self,
-        complex_no: str,
-        rlet_tp_cd: str = "APT:JGC",
-        trad_tp_cd: str = "A1",
-        page: int = 1
-    ) -> Dict:
-        """
-        단지별 매물 목록 조회 (new.land.naver.com API)
-        
-        Args:
-            complex_no: 단지 번호
-            rlet_tp_cd: 부동산 유형 코드
-            trad_tp_cd: 거래 유형 코드
-            page: 페이지 번호
-        
-        Returns:
-            API 응답 데이터
-        """
-        # new.land.naver.com API 사용 시도
-        url = "https://new.land.naver.com/api/articles/complex/" + complex_no
-        
-        params = {
-            "realEstateType": rlet_tp_cd,
-            "tradeType": trad_tp_cd if trad_tp_cd else "",
-            "tag": ":::::::::",
-            "rentPriceMin": "0",
-            "rentPriceMax": "900000000",
-            "priceMin": "0",
-            "priceMax": "900000000",
-            "areaMin": "0",
-            "areaMax": "900000000",
-            "priceType": "RETAIL",
-            "page": str(page),
-            "complexNo": complex_no,
-            "type": "list",
-            "order": "rank"
-        }
-        
-        # 딜레이 적용
-        self._wait_if_needed()
-        
-        # 재시도 로직
-        for attempt in range(self.config.max_retries):
-            try:
-                response = self.session.get(
-                    url,
-                    params=params,
-                    timeout=self.config.timeout
-                )
-                # 404는 단지 정보가 없는 경우이므로 무시
-                if response.status_code == 404:
-                    return {"data": {"articleList": []}}
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                if attempt < self.config.max_retries - 1:
-                    wait_time = (attempt + 1) * 2
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    # 실패해도 계속 진행
-                    return {"data": {"articleList": []}}
-        
-        return {"data": {"articleList": []}}
-    
     def get_cluster_articles(
         self,
         item_id: str,
