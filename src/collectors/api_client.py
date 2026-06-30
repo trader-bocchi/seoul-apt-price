@@ -17,6 +17,7 @@ class ApiConfig:
     min_delay: float = 0.1  # API 호출 간 최소 딜레이 (초) — 너무 짧으면 429 차단 위험
     timeout: int = 10  # 타임아웃 (초)
     max_retries: int = 3  # 최대 재시도 횟수
+    max_workers: int = 4  # 단지별 매물 수집 동시성 (속도↔429 위험 균형; 1=순차)
 
 
 class NaverLandApiClient:
