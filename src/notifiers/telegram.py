@@ -19,6 +19,30 @@ def _esc(value) -> str:
     return html.escape(str(value))
 
 
+def _split_html_message(text: str, limit: int = _MAX_MSG_LEN) -> List[str]:
+    """parse_mode=HTML 메시지를 limit 이하 청크로 분할.
+
+    줄 단위로 자르되 <pre> 블록 내부에서는 자르지 않는다(HTML 태그 깨짐 방지).
+    """
+    chunks: List[str] = []
+    current = ""
+    in_pre = False
+    for line in text.split("\n"):
+        piece = line + "\n"
+        if current and not in_pre and len(current) + len(piece) > limit:
+            chunks.append(current.rstrip("\n"))
+            current = ""
+        current += piece
+        opens, closes = line.count("<pre>"), line.count("</pre>")
+        if opens > closes:
+            in_pre = True
+        elif closes > opens:
+            in_pre = False
+    if current.strip():
+        chunks.append(current.rstrip("\n"))
+    return chunks or [text]
+
+
 class TelegramNotifier:
     """텔레그램 알림 클래스"""
 
@@ -41,6 +65,16 @@ class TelegramNotifier:
         except Exception as e:
             print(f"텔레그램 메시지 전송 실패: {e}")
             return False
+
+    def _send_long(self, message: str) -> bool:
+        """4096자 한도 초과 시 <pre> 경계를 지키며 분할 전송."""
+        if len(message) <= _MAX_MSG_LEN:
+            return self.send_message(message)
+        ok = True
+        for chunk in _split_html_message(message):
+            if not self.send_message(chunk):
+                ok = False
+        return ok
 
     # ──────────────────────────────────────────
     # Public send methods
@@ -81,7 +115,7 @@ class TelegramNotifier:
 
     def send_my_home_detailed_analysis(self, complex_name: str, analysis_data: Dict) -> bool:
         message = _format_my_home_detailed(complex_name, analysis_data)
-        success = self.send_message(message)
+        success = self._send_long(message)
         if success:
             CSVStore.save_telegram_log("my_home_detailed_analysis", {
                 "sent_at": datetime.now().isoformat(),
@@ -149,10 +183,10 @@ class TelegramNotifier:
     def send_migration_report(self, report: Dict) -> bool:
         """이사 비교 레포트 전송 (스냅샷 메시지 + 추세 메시지)"""
         msg1 = _format_migration_snapshot(report)
-        ok1 = self.send_message(msg1)
+        ok1 = self._send_long(msg1)
 
         msg2 = _format_migration_trend(report)
-        ok2 = self.send_message(msg2) if msg2 else True
+        ok2 = self._send_long(msg2) if msg2 else True
 
         return ok1 and ok2
 
@@ -501,9 +535,7 @@ def _format_migration_trend(report: Dict) -> str:
     my = report["my_home"]
     targets = report["targets"]
 
-    # 어떤 기간 컬럼이 실제로 존재하는지 파악
-    all_period_labels = [label for label, *_ in [("1M",), ("3M",), ("6M",), ("1Y",)]]
-    # 실제 순서 유지
+    # 어떤 기간 컬럼이 실제로 존재하는지 파악 (실제 순서 유지)
     period_order = ["1M", "3M", "6M", "1Y"]
 
     used_periods: set = set()

@@ -3,7 +3,7 @@
 > 개인 작업 스타일·환경 설정은 `.claude/CLAUDE.md` 참고. 이 문서는 **프로젝트 자체**의 구조·실행·관례를 다룬다.
 
 ## 한 줄 요약
-네이버 부동산(`fin.land.naver.com`) 매물을 행정구역 단위로 수집 → 면적·층·향·동별 호가 분석 → 텔레그램 리포트 자동 전송. GitHub Actions로 주 3회(월·목·토 08:30 KST) 실행.
+네이버 부동산(`fin.land.naver.com`) 매물을 행정구역 단위로 수집 → 면적·층·향·동별 호가 분석 → 텔레그램 리포트 자동 전송. 실행은 수동(`python scripts/run_pipeline.py`).
 
 ## 아키텍처 (데이터 흐름)
 ```
@@ -45,7 +45,7 @@ python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt
 # 최소 의존성만: curl_cffi pandas numpy requests python-dotenv pytz geopy
 ./venv/bin/python scripts/run_pipeline.py
 ```
-`.env` 필수 키: `REGION_NAME`(쉼표 구분), `MY_HOME_COMPLEX_NAME`, `MY_HOME_COMPLEX_AREA`(전용 ㎡), `TARGET_HOME_COMPLEX_NAME`(쉼표 구분), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. 선택: `FILTER_DPRC_MIN/MAX`(만원), `FILTER_SPC_MIN/MAX`(공급 ㎡).
+`.env` 필수 키: `REGION_NAME`(쉼표 구분), `MY_HOME_COMPLEX_NAME`, `MY_HOME_COMPLEX_AREA`(전용 ㎡), `TARGET_HOME_COMPLEX_NAME`(쉼표 구분), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. 선택: `FILTER_DPRC_MIN/MAX`(만원), `FILTER_SPC_MIN/MAX`(공급 ㎡), `COLLECT_MAX_WORKERS`(단지 수집 동시성, 기본 4; 429 잦으면 ↓, 1=순차).
 
 ## 데이터 관례
 - raw CSV 컬럼은 **한글**(`거래유형코드`, `가격`(만원), `전용면적제곱미터`, `층수정보`(`현재/전체`), `방향`, `매물특징설명` 등).
@@ -58,7 +58,7 @@ python3.12 -m venv venv && ./venv/bin/pip install -r requirements.txt
 - `ComplexAnalyzer.analyze_complex()` / `load_recent_offers()`는 `offers_*.csv`를 찾지만 파이프라인은 `properties_*.csv`를 쓴다 → **파일 기반 경로는 끊겨 있음.** DataFrame 경로(`analyze_complex_from_dataframe`)만 사용.
 - API 호출 실패·429는 **조용히 빈 결과를 반환**(로그 없음)해 수집 누락이 보이지 않을 수 있다.
 - cortarNo 하드코딩 폴백(`generate_cortar_no_from_region_name`)과 `search_region_info`/`get_article_list_by_region`는 CSV 조회 성공 시 사실상 죽은 경로.
-- 자동 테스트 없음(`tests/*`는 라이브 API를 때리는 print 스크립트, assertion 없음).
+- `tests/test_analysis.py`는 실제 assertion 테스트(escape·매매 전용 가격 등 8개). 단, `tests/test_direct_api.py`·`tests/test_region_search.py`는 여전히 라이브 API print 스크립트(assertion 없음).
 
 ## gstack 워크플로 (이 프로젝트에 적용)
 UI(웹/iOS)가 없는 Python 데이터 파이프라인 → 다음 스킬만 유효:

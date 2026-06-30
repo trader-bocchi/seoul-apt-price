@@ -1,8 +1,8 @@
 """
 수집 → 분석 → 전송 인메모리 파이프라인
 
-로컬 파일 저장 없이 전체 파이프라인을 메모리 내에서 실행합니다.
-GitHub Actions 등 임시 환경에서 사용합니다.
+수집 → 분석 → 텔레그램 전송을 한 번에 실행합니다.
+`python scripts/run_pipeline.py`로 수동 실행합니다.
 """
 import sys
 from pathlib import Path
@@ -26,6 +26,22 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _previous_run_raw_total(raw_base: Path, current_date_str: str) -> int:
+    """직전 실행(가장 최근의 이전 날짜) raw CSV의 총 행수(중복 제거 전) 반환. 없으면 0."""
+    totals: dict[str, int] = {}
+    for csv_path in raw_base.glob("*/properties_*.csv"):
+        date_str = csv_path.stem.replace("properties_", "")
+        if date_str >= current_date_str:  # 이번 실행분 제외
+            continue
+        try:
+            totals[date_str] = totals.get(date_str, 0) + len(
+                pd.read_csv(csv_path, usecols=["매물번호"], encoding="utf-8-sig")
+            )
+        except Exception:
+            continue
+    return totals[max(totals)] if totals else 0
 
 
 def properties_to_dataframe(properties) -> pd.DataFrame:
@@ -94,7 +110,9 @@ def main():
 
     # 2. 수집 + 지역별 즉시 raw 저장
     logger.info(f"수집 대상 지역 {len(region_names)}개: {', '.join(region_names)}")
-    collector = RegionCollector(ApiConfig(timeout=10, max_retries=3))
+    collector = RegionCollector(ApiConfig(
+        timeout=10, max_retries=3, max_workers=EnvConfig.get_collect_max_workers()
+    ))
     all_properties = []
 
     raw_base = project_root / "data" / "raw"
@@ -173,6 +191,18 @@ def main():
     before = len(combined_df)
     combined_df = combined_df.drop_duplicates(subset=["매물번호"])
     logger.info(f"총 {len(combined_df)}개 매물 (중복 {before - len(combined_df)}개 제거)")
+
+    # 수집 건수 급감 감지 (raw 기준, 직전 실행 대비 50% 미만이면 429/IP 차단 의심)
+    prev_raw_total = _previous_run_raw_total(raw_base, date_str)
+    if prev_raw_total and before < prev_raw_total * 0.5:
+        warn = (
+            f"⚠️ <b>수집 건수 급감</b>\n"
+            f"직전 {prev_raw_total:,}건 → 이번 {before:,}건 "
+            f"({before / prev_raw_total * 100:.0f}%)\n"
+            f"429 rate limit / IP 차단 의심 — 리포트가 불완전할 수 있습니다."
+        )
+        logger.warning(warn.replace("\n", " "))
+        notifier.send_message(warn)
 
     # 4. 단지별 필터링 & 분석
     all_analyses = {}

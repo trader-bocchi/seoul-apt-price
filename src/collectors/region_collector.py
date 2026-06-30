@@ -7,6 +7,8 @@ from datetime import datetime
 from src.collectors.api_client import NaverLandApiClient, ApiConfig
 from src.collectors.data_collector import Property, Complex
 from src.storage.csv_store import CSVStore
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import math
 import os
 import csv
@@ -25,6 +27,57 @@ class RegionCollector:
         self.api_client = NaverLandApiClient(api_config)
         self.properties: List[Property] = []
         self.complexes: List[Complex] = []
+        self._thread_local = threading.local()
+
+    def _client_for_thread(self) -> NaverLandApiClient:
+        """스레드별 독립 API 클라이언트 반환 (curl_cffi 세션은 스레드 공유 불가)."""
+        client = getattr(self._thread_local, "client", None)
+        if client is None:
+            client = NaverLandApiClient(self.api_client.config)
+            self._thread_local.client = client
+        return client
+
+    def _collect_one_complex(
+        self,
+        complex_no: str,
+        region_name: str,
+        trade_types_list: List[str],
+        dprc_min: Optional[int],
+        dprc_max: Optional[int],
+        spc_min: Optional[float],
+        spc_max: Optional[float],
+    ) -> List[Property]:
+        """단지 하나의 전체 매물을 cursor 페이지네이션으로 수집 (스레드 안전)."""
+        client = self._client_for_thread()
+        out: List[Property] = []
+        last_info_cursor: list = []
+        while True:
+            try:
+                page_data = client.get_complex_article_list_fin(
+                    complex_no=complex_no,
+                    trade_types=trade_types_list,
+                    last_info=last_info_cursor,
+                    size=30,
+                )
+                out.extend(self.extract_properties_from_fin_article_list(
+                    page_data,
+                    region_name,
+                    complex_no=complex_no,
+                    dprc_min=dprc_min,
+                    dprc_max=dprc_max,
+                    spc_min=float(spc_min) if spc_min is not None else None,
+                    spc_max=float(spc_max) if spc_max is not None else None,
+                ))
+                result = page_data.get("result", {})
+                if not result.get("hasNextPage"):
+                    break
+                last_info_cursor = result.get("lastInfo", [])
+                if not last_info_cursor:
+                    break
+            except Exception as e:
+                logger.warning(f"[{region_name}] 단지 {complex_no} 페이지 수집 중단 (수집 누락 가능): {e}")
+                break
+        return out
     
     @classmethod
     def _load_region_codes_from_csv(cls) -> Dict[str, str]:
@@ -755,9 +808,9 @@ class RegionCollector:
             progress_callback: 진행 상황 콜백 함수 (current, total, message)
             dprc_min: 최소 가격 (만원 단위, 예: 80000 = 8억)
             dprc_max: 최대 가격 (만원 단위, 예: 130000 = 13억)
-            spc_min: 최소 면적 (평 단위, 예: 33 = 33평)
-            spc_max: 최대 면적 (평 단위, 예: 99 = 99평)
-        
+            spc_min: 최소 공급면적 (㎡ 단위)
+            spc_max: 최대 공급면적 (㎡ 단위)
+
         Returns:
             (매물 리스트, 단지 리스트)
         """
@@ -900,55 +953,38 @@ class RegionCollector:
         except Exception as e:
             raise Exception(f"단지 목록 조회 실패: {str(e)}")
 
-        # 4단계: 각 단지별 fin.land.naver.com POST API로 매물 조회
-        total_complexes = len(complex_list)
-
-        for idx, cluster in enumerate(complex_list):
-            # complexClusters 응답에서 complexNumber 추출
+        # 4단계: 각 단지별 fin.land.naver.com POST API로 매물 조회 (단지 단위 병렬)
+        complex_nos = []
+        for cluster in complex_list:
             complex_no = str(
                 cluster.get("complexNumber")
                 or cluster.get("complexNo")
                 or cluster.get("id")
                 or ""
             )
-            if not complex_no:
-                continue
+            if complex_no:
+                complex_nos.append(complex_no)
 
-            if progress_callback:
-                pct = 15 + int((idx / max(total_complexes, 1)) * 75)
-                progress_callback(pct, 100, f"단지 {idx+1}/{total_complexes} 수집 중 (complexNo: {complex_no})...")
+        total_complexes = len(complex_nos)
+        max_workers = max(1, min(self.api_client.config.max_workers, total_complexes or 1))
 
-            # cursor 기반 페이지네이션
-            last_info_cursor: list = []
-            while True:
-                try:
-                    page_data = self.api_client.get_complex_article_list_fin(
-                        complex_no=complex_no,
-                        trade_types=trade_types_list,
-                        last_info=last_info_cursor,
-                        size=30
-                    )
-                    page_props = self.extract_properties_from_fin_article_list(
-                        page_data,
-                        region_name,
-                        complex_no=complex_no,
-                        dprc_min=dprc_min,
-                        dprc_max=dprc_max,
-                        spc_min=float(spc_min) if spc_min is not None else None,
-                        spc_max=float(spc_max) if spc_max is not None else None
-                    )
-                    self.properties.extend(page_props)
+        def _task(cn: str) -> List[Property]:
+            return self._collect_one_complex(
+                cn, region_name, trade_types_list, dprc_min, dprc_max, spc_min, spc_max
+            )
 
-                    result = page_data.get("result", {})
-                    if not result.get("hasNextPage"):
-                        break
-                    last_info_cursor = result.get("lastInfo", [])
-                    if not last_info_cursor:
-                        break
-                except Exception as e:
-                    logger.warning(f"[{region_name}] 단지 {complex_no} 페이지 수집 중단 (수집 누락 가능): {e}")
-                    break
-        
+        if max_workers == 1:
+            for cn in complex_nos:
+                self.properties.extend(_task(cn))
+        else:
+            # 스레드별 독립 세션으로 단지 동시 수집 (extract_*는 순수 함수라 안전)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for props in executor.map(_task, complex_nos):
+                    self.properties.extend(props)
+
+        if progress_callback:
+            progress_callback(90, 100, f"매물 수집 완료 ({total_complexes}개 단지)")
+
         # 5단계: 중복 제거
         if progress_callback:
             progress_callback(95, 100, "중복 제거 중...")

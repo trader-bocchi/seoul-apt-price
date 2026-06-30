@@ -8,7 +8,6 @@
 - **면적별 분석**: 공급면적 기준 호가 분포 (최저·최고·중앙값)
 - **상세 분석**: 내 단지의 층별·향별·동별 호가 차이 분석
 - **텔레그램 알림**: 분석 결과를 텔레그램 메시지로 자동 전송
-- **GitHub Actions**: 월/목/토 오전 8시 30분(KST) 자동 실행
 
 ## 설치
 
@@ -46,6 +45,9 @@ FILTER_DPRC_MAX=160000  # 최대 16억
 # 면적 필터 (공급면적 m² 단위, 선택사항)
 FILTER_SPC_MIN=65       # 최소 65m²
 FILTER_SPC_MAX=115      # 최대 115m²
+
+# 단지 수집 동시성 (선택사항, 기본 4; 429 잦으면 낮추거나 1=순차)
+COLLECT_MAX_WORKERS=4
 ```
 
 > **주의:** `FILTER_SPC_MIN/MAX`는 **공급면적 m²** 단위입니다 (평 단위가 아님).
@@ -59,49 +61,6 @@ python scripts/run_pipeline.py
 ```
 
 지역별 raw 데이터를 `data/raw/{지역명}/` 에 즉시 저장하며, 전체 완료 후 텔레그램으로 리포트를 전송합니다.
-
-## GitHub Actions 자동화
-
-### 자동 실행 일정
-
-| 요일 | KST | UTC (cron) |
-|------|-----|------------|
-| 월요일 | 08:30 | 일 23:30 |
-| 목요일 | 08:30 | 수 23:30 |
-| 토요일 | 08:30 | 금 23:30 |
-
-### 수동 트리거 방법
-
-**방법 1 — GitHub 웹:**
-1. 저장소 → **Actions** 탭 → **Weekly Apartment Price Report**
-2. 우측 **"Run workflow"** 버튼 클릭 → **Run workflow** 확인
-
-**방법 2 — GitHub CLI:**
-```bash
-gh workflow run weekly_report.yml --ref master
-```
-
-### GitHub Actions 설정 (Secrets & Variables)
-
-저장소 **Settings → Secrets and variables → Actions** 에서 설정:
-
-**Secrets (민감 정보):**
-| 키 | 설명 |
-|----|------|
-| `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 |
-| `TELEGRAM_CHAT_ID` | 텔레그램 채팅 ID |
-
-**Variables (설정값):**
-| 키 | 예시 | 설명 |
-|----|------|------|
-| `REGION_NAME` | `경기도 성남시 수정구 신흥동, ...` | 수집 지역 |
-| `MY_HOME_COMPLEX_NAME` | `산들마을` | 내 집 단지명 |
-| `MY_HOME_COMPLEX_AREA` | `51` | 내 집 전용면적 (m²) |
-| `TARGET_HOME_COMPLEX_NAME` | `산성역포레스티아, ...` | 관심 단지 목록 |
-| `FILTER_DPRC_MIN` | `70000` | 최소 가격 (만원) |
-| `FILTER_DPRC_MAX` | `160000` | 최대 가격 (만원) |
-| `FILTER_SPC_MIN` | `65` | 최소 공급면적 (m²) |
-| `FILTER_SPC_MAX` | `115` | 최대 공급면적 (m²) |
 
 ## 데이터 저장 위치
 

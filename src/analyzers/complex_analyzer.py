@@ -4,7 +4,6 @@
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,60 +24,7 @@ class ComplexAnalyzer:
             complex_name: 단지명
         """
         self.complex_name = complex_name
-        self.data_dir = Path("data/raw") / complex_name
-    
-    def load_recent_offers(self, days: int = None) -> Optional[pd.DataFrame]:
-        """
-        매물 데이터 로드 (전체 매물, days 파라미터는 무시)
-        
-        Args:
-            days: 사용 안 함 (전체 매물 로드)
-        
-        Returns:
-            DataFrame 또는 None
-        """
-        if not self.data_dir.exists():
-            logger.warning(f"Data directory not found: {self.data_dir}")
-            return None
-        
-        # offers 파일 찾기
-        offer_files = list(self.data_dir.glob("offers_*.csv"))
-        if not offer_files:
-            logger.warning(f"No offer files found in {self.data_dir}")
-            return None
-        
-        # 최신 파일 로드 (전체 매물, 날짜 필터링 없음)
-        offer_files.sort(key=lambda x: x.name, reverse=True)
-        latest_file = offer_files[0]
-        
-        try:
-            df = pd.read_csv(latest_file, encoding='utf-8-sig')
-            return df
-        except Exception as e:
-            logger.error(f"Error loading offers: {e}")
-            return None
-    
-    def analyze_complex(self, days: int = None) -> Dict[str, Any]:
-        """
-        단지 매물 분석 (전체 매물 분석)
-        
-        Args:
-            days: 사용 안 함 (전체 매물 분석)
-        
-        Returns:
-            분석 결과 딕셔너리
-        """
-        df = self.load_recent_offers(days)
-        
-        if df is None or df.empty:
-            return {
-                "complex_name": self.complex_name,
-                "total_count": 0,
-                "error": "데이터 없음"
-            }
-        
-        return self.analyze_complex_from_dataframe(df, days=days)
-    
+
     def analyze_complex_from_dataframe(self, df: pd.DataFrame, days: int = None) -> Dict[str, Any]:
         """
         DataFrame을 직접 받아서 단지 매물 분석 (전체 매물 분석, 평형별 분리)

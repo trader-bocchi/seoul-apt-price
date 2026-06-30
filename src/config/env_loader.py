@@ -276,10 +276,10 @@ class EnvConfig:
         면적 필터 최소값 반환 (선택사항)
         
         .env 파일에서 FILTER_SPC_MIN 환경 변수를 읽어 반환합니다.
-        형식: FILTER_SPC_MIN=33 (33평)
-        
+        형식: FILTER_SPC_MIN=80 (공급 80㎡)
+
         Returns:
-            최소 면적 (평 단위) 또는 None
+            최소 공급면적 (㎡ 단위) 또는 None
         """
         spc_min_str = os.getenv("FILTER_SPC_MIN")
         if spc_min_str:
@@ -295,10 +295,10 @@ class EnvConfig:
         면적 필터 최대값 반환 (선택사항)
         
         .env 파일에서 FILTER_SPC_MAX 환경 변수를 읽어 반환합니다.
-        형식: FILTER_SPC_MAX=99 (99평)
-        
+        형식: FILTER_SPC_MAX=140 (공급 140㎡)
+
         Returns:
-            최대 면적 (평 단위) 또는 None
+            최대 공급면적 (㎡ 단위) 또는 None
         """
         spc_max_str = os.getenv("FILTER_SPC_MAX")
         if spc_max_str:
@@ -308,6 +308,25 @@ class EnvConfig:
                 return None
         return None
     
+    @staticmethod
+    def get_collect_max_workers() -> int:
+        """
+        단지별 매물 수집 동시성 반환 (선택사항, 기본 4).
+
+        .env 파일에서 COLLECT_MAX_WORKERS 환경 변수를 읽어 반환합니다.
+        429/IP 차단이 잦으면 낮추고(예: 2), 1이면 순차 수집.
+
+        Returns:
+            동시 워커 수 (>=1)
+        """
+        raw = os.getenv("COLLECT_MAX_WORKERS")
+        if raw:
+            try:
+                return max(1, int(raw))
+            except ValueError:
+                pass
+        return 4
+
     @staticmethod
     def get_my_home_area() -> Optional[float]:
         """

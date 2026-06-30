@@ -126,3 +126,21 @@ def test_complex_block_escapes_complex_name():
     assert "강남&lt;script&gt;아파트&amp;" in out
     # 래퍼 태그(<b>)는 정상 유지
     assert "<b>" in out
+
+
+# ── H2 회귀: 긴 메시지 분할 (<pre> 무결성) ──────────────────
+
+def test_split_short_message_single_chunk():
+    assert tg._split_html_message("hi") == ["hi"]
+
+
+def test_split_keeps_pre_balanced_and_under_limit():
+    msg = "head\n<pre>" + ("row\n" * 50) + "</pre>\n" + ("tail\n" * 2000)
+    chunks = tg._split_html_message(msg, limit=4000)
+    assert len(chunks) > 1
+    for c in chunks:
+        # <pre> 블록이 청크 경계에서 쪼개지지 않아야 함
+        assert c.count("<pre>") == c.count("</pre>")
+        # pre 블록을 포함하지 않은 청크는 한도 이하
+        if "<pre>" not in c:
+            assert len(c) <= 4000
